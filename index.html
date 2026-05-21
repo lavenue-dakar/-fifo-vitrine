@@ -747,8 +747,8 @@ async function pushRebus(prodNom, dateEntree, qty, age, itemId){
 
 // Envoi vers Google Apps Script
 async function postToScript(data){
-  if(!CONFIG.gsUrl) throw new Error('Pas d URL Apps Script');
-  const r = await fetch(CONFIG.gsUrl, {
+  if(!getGsUrl()) throw new Error('Pas d URL Apps Script');
+  const r = await fetch(getGsUrl(), {
     method: 'POST',
     mode: 'no-cors',
     headers: {'Content-Type': 'application/json'},
@@ -951,7 +951,7 @@ async function addItem(pid){
   renderAll();
   toast('Entrée enregistrée ✓');
   // Sync via Apps Script en arrière-plan
-  if(CONFIG.gsUrl){
+  if(getGsUrl()){
     try{ await pushEntree(pid,date,qty,prod.dlc); }
     catch(e){ console.log('Script sync entree:',e); toast('⚠ Sheet non synchronisé — données sauvées localement'); }
   }
@@ -966,7 +966,7 @@ async function sellOne(pid,itemId){
   else{ STATE.vitrine[pid]=items.filter(i=>i.id!==itemId); }
   saveLocal(); renderAll();
   toast('1 vente enregistrée ✓');
-  if(CONFIG.gsUrl){
+  if(getGsUrl()){
     try{
       if(oldQty>1){ await pushUpdateQty(item.id, item.qty); }
       else{ await pushUpdateQty(item.id, 0); }
@@ -984,7 +984,7 @@ async function adjQty(pid,itemId){
   else{ item.qty=n; }
   saveLocal(); renderAll();
   toast('Quantité mise à jour');
-  if(CONFIG.gsUrl){
+  if(getGsUrl()){
     try{ await pushUpdateQty(item.id, n); }catch(e){}
   }
 }
@@ -999,7 +999,7 @@ async function rebusItem(pid,itemId){
   STATE.vitrine[pid]=items.filter(i=>i.id!==itemId);
   saveLocal(); renderAll();
   toast(`${item.qty} pièce(s) passée(s) en rebus`);
-  if(CONFIG.gsUrl){
+  if(getGsUrl()){
     try{
       await pushRebus(prod?.nom||pid, item.dateEntree, item.qty, age, item.id);
     }catch(e){ console.log('Script sync rebus:',e); }
@@ -1079,6 +1079,10 @@ function deleteProd(){
 }
 $('prod-modal').addEventListener('click',e=>{ if(e.target===$('prod-modal'))closeModal(); });
 
+// Helper pour récupérer l'URL du script
+function getGsUrl(){
+  try{ return JSON.parse(localStorage.getItem('fifo_avenue_config')||'{}').gsUrl||''; }catch(e){ return ''; }
+}
 // ═══════════════════════════════════════════════
 // INIT
 // ═══════════════════════════════════════════════
