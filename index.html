@@ -1089,4 +1089,25 @@ async function init(){
   if(!API_KEY){
     $('config-banner').style.display='flex';
     setSyncStatus('Clé API requise','dot-err');
-    render
+    renderAll();
+    return;
+  }
+
+  // Charger le catalogue depuis Sheets (lecture seule)
+  setSyncStatus('Chargement catalogue…','dot-warn');
+  try{
+    await pullCatalogue();
+    setSyncStatus('Synchronisé','dot-ok');
+    toast('Catalogue chargé depuis Google Sheets ✓');
+  }catch(e){
+    setSyncStatus('Mode local','dot-warn');
+    console.error('Catalogue non chargé:', e);
+  }
+  // La vitrine est gérée localement
+  renderAll();
+}
+
+init();
+</script>
+</body>
+</html>
