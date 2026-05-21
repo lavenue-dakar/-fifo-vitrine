@@ -712,18 +712,49 @@ async function pullCatalogue(){
 // Écrire une entrée vitrine dans Sheets
 async function pushEntree(prodId, dateEntree, qty, dlc){
   const ts = Date.now();
-  await sheetsAppend(`${SHEET_VITRINE}!A:H`, [[prodId, dateEntree, qty, dlc, addDays(dateEntree,dlc), daysDiff(dateEntree), 'En cours', ts]]);
+  await postToScript({
+    type: 'entree',
+    produitId: prodId,
+    dateEntree,
+    qty,
+    dlc,
+    itemId: ts,
+  });
   return ts;
 }
 
-// Mettre à jour quantité d'un lot dans Sheets
-async function pushUpdateQty(sheetRow, newQty){
-  await sheetsUpdate(`${SHEET_VITRINE}!C${sheetRow}`, [[newQty]]);
+// Mettre à jour quantité d'un lot via Apps Script
+async function pushUpdateQty(itemId, newQty){
+  await postToScript({
+    type: 'update_qty',
+    itemId: String(itemId),
+    qty: newQty,
+  });
 }
 
-// Enregistrer un rebus dans le journal
-async function pushRebus(prodNom, dateEntree, qty, age){
-  await sheetsAppend(`${SHEET_JOURNAL}!A:G`, [[todayStr(), prodNom, qty, dateEntree, age, 'DLC dépassée', '']]);
+// Enregistrer un rebus via Apps Script
+async function pushRebus(prodNom, dateEntree, qty, age, itemId){
+  await postToScript({
+    type: 'rebus',
+    produitNom: prodNom,
+    dateEntree,
+    qty,
+    age,
+    itemId: String(itemId),
+    raison: 'DLC dépassée',
+  });
+}
+
+// Envoi vers Google Apps Script
+async function postToScript(data){
+  if(!CONFIG.gsUrl) throw new Error('Pas d URL Apps Script');
+  const r = await fetch(CONFIG.gsUrl, {
+    method: 'POST',
+    mode: 'no-cors',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(data),
+  });
+  return r;
 }
 
 // ═══════════════════════════════════════════════
@@ -919,10 +950,10 @@ async function addItem(pid){
   saveLocal();
   renderAll();
   toast('Entrée enregistrée ✓');
-  // Sync Sheets en arrière-plan
-  if(API_KEY){
+  // Sync via Apps Script en arrière-plan
+  if(CONFIG.gsUrl){
     try{ await pushEntree(pid,date,qty,prod.dlc); }
-    catch(e){ toast('⚠ Sheets non synchronisé — données sauvées localement'); }
+    catch(e){ console.log('Script sync entree:',e); toast('⚠ Sheet non synchronisé — données sauvées localement'); }
   }
 }
 
@@ -935,11 +966,11 @@ async function sellOne(pid,itemId){
   else{ STATE.vitrine[pid]=items.filter(i=>i.id!==itemId); }
   saveLocal(); renderAll();
   toast('1 vente enregistrée ✓');
-  if(API_KEY&&item.sheetRow){
+  if(CONFIG.gsUrl){
     try{
-      if(oldQty>1){ await pushUpdateQty(item.sheetRow,item.qty); }
-      else{ await pushUpdateQty(item.sheetRow,0); }
-    }catch(e){ console.log('Sheets sync sell:',e); }
+      if(oldQty>1){ await pushUpdateQty(item.id, item.qty); }
+      else{ await pushUpdateQty(item.id, 0); }
+    }catch(e){ console.log('Script sync sell:',e); }
   }
 }
 
@@ -953,8 +984,8 @@ async function adjQty(pid,itemId){
   else{ item.qty=n; }
   saveLocal(); renderAll();
   toast('Quantité mise à jour');
-  if(API_KEY&&item.sheetRow){
-    try{ await pushUpdateQty(item.sheetRow,n); }catch(e){}
+  if(CONFIG.gsUrl){
+    try{ await pushUpdateQty(item.id, n); }catch(e){}
   }
 }
 
@@ -968,11 +999,10 @@ async function rebusItem(pid,itemId){
   STATE.vitrine[pid]=items.filter(i=>i.id!==itemId);
   saveLocal(); renderAll();
   toast(`${item.qty} pièce(s) passée(s) en rebus`);
-  if(API_KEY){
+  if(CONFIG.gsUrl){
     try{
-      await pushRebus(prod?.nom||pid,item.dateEntree,item.qty,age);
-      if(item.sheetRow){ await pushUpdateQty(item.sheetRow,0); }
-    }catch(e){}
+      await pushRebus(prod?.nom||pid, item.dateEntree, item.qty, age, item.id);
+    }catch(e){ console.log('Script sync rebus:',e); }
   }
 }
 
@@ -1059,25 +1089,4 @@ async function init(){
   if(!API_KEY){
     $('config-banner').style.display='flex';
     setSyncStatus('Clé API requise','dot-err');
-    renderAll();
-    return;
-  }
-
-  // Charger depuis Sheets
-  setSyncStatus('Connexion…','dot-warn');
-  try{
-    await pullCatalogue();
-    await pullVitrine();
-    setSyncStatus('Synchronisé','dot-ok');
-  }catch(e){
-    setSyncStatus('Mode hors ligne','dot-warn');
-    toast('⚠ Sheets inaccessible — mode local activé');
-    console.error(e);
-  }
-  renderAll();
-}
-
-init();
-</script>
-</body>
-</html>
+    render
