@@ -673,23 +673,24 @@ async function sheetsDelete(sheetGid, rowIndex){
   return r.json();
 }
 
-// Lire l'état vitrine depuis Sheets
+// Lire l'état vitrine depuis Sheets via Apps Script (GET)
 async function pullVitrine(){
-  const data = await sheetsGet(`${SHEET_VITRINE}!A2:H1000`);
-  const rows = data.values || [];
+  if(!getGsUrl()) return;
+  const url = getGsUrl() + '?action=getVitrine';
+  const r = await fetch(url);
+  const data = await r.json();
+  if(!data.vitrine) return;
+  
   const vitrine = {};
-  rows.forEach((row,idx)=>{
-    if(!row[0]) return;
-    const prodId = row[0];
-    if(!vitrine[prodId]) vitrine[prodId]=[];
-    const qty = parseInt(row[2])||0;
-    if(qty<=0) return;
-    vitrine[prodId].push({
-      id: parseInt(row[7])||idx,
-      sheetRow: idx+2, // ligne réelle dans le sheet (1-indexé, +1 header)
-      dateEntree: row[1]||todayStr(),
-      qty,
-      dlc: parseInt(row[3])||3,
+  data.vitrine.forEach(item=>{
+    if(!item.produitId) return;
+    const pid = item.produitId;
+    if(!vitrine[pid]) vitrine[pid]=[];
+    vitrine[pid].push({
+      id: parseInt(item.itemId)||Date.now(),
+      dateEntree: item.dateEntree||todayStr(),
+      qty: parseInt(item.qty)||0,
+      dlc: parseInt(item.dlc)||3,
     });
   });
   STATE.vitrine = vitrine;
@@ -1125,17 +1126,17 @@ async function init(){
     return;
   }
 
-  // Charger le catalogue depuis Sheets (lecture seule)
-  setSyncStatus('Chargement catalogue…','dot-warn');
+  // Charger catalogue et vitrine depuis Sheets
+  setSyncStatus('Chargement…','dot-warn');
   try{
     await pullCatalogue();
+    await pullVitrine();
     setSyncStatus('Synchronisé','dot-ok');
-    toast('Catalogue chargé depuis Google Sheets ✓');
+    toast('Données chargées depuis Google Sheets ✓');
   }catch(e){
     setSyncStatus('Mode local','dot-warn');
-    console.error('Catalogue non chargé:', e);
+    console.error('Chargement non complet:', e);
   }
-  // La vitrine est gérée localement
   renderAll();
 }
 
