@@ -995,14 +995,40 @@ async function rebusItem(pid,itemId){
   const items=STATE.vitrine[pid]||[];
   const item=items.find(i=>i.id===itemId);
   if(!item)return;
-  if(!confirm(`Passer ${item.qty} pièce(s) en rebus ?`))return;
-  const age=daysDiff(item.dateEntree);
-  STATE.vitrine[pid]=items.filter(i=>i.id!==itemId);
+
+  // Demander combien de pièces à jeter
+  const input = prompt(`Combien de pièces à passer en rebus ?\n(Stock actuel : ${item.qty} pièce${item.qty>1?'s':''})`, item.qty);
+  if(input===null) return; // Annulé
+  const qteRebus = parseInt(input);
+  if(isNaN(qteRebus) || qteRebus <= 0){
+    toast('Quantité invalide');
+    return;
+  }
+  if(qteRebus > item.qty){
+    toast(`Impossible — stock actuel : ${item.qty} pièce${item.qty>1?'s':''}`);
+    return;
+  }
+
+  const age = daysDiff(item.dateEntree);
+  const qteRestante = item.qty - qteRebus;
+
+  if(qteRestante === 0){
+    // Supprimer le lot entièrement
+    STATE.vitrine[pid] = items.filter(i=>i.id!==itemId);
+  } else {
+    // Mettre à jour la quantité restante
+    item.qty = qteRestante;
+  }
+
   saveLocal(); renderAll();
-  toast(`${item.qty} pièce(s) passée(s) en rebus`);
+  toast(`${qteRebus} pièce${qteRebus>1?'s':''} passée${qteRebus>1?'s':''} en rebus · ${qteRestante} restante${qteRestante>1?'s':''}`);
+
   if(getGsUrl()){
     try{
-      await pushRebus(prod?.nom||pid, item.dateEntree, item.qty, age, item.id);
+      await pushRebus(prod?.nom||pid, item.dateEntree, qteRebus, age, item.id);
+      if(qteRestante > 0){
+        await pushUpdateQty(item.id, qteRestante);
+      }
     }catch(e){ console.log('Script sync rebus:',e); }
   }
 }
