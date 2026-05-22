@@ -1,442 +1,1118 @@
-// ============================================================
-// FIFO VITRINE — L'Avenue · Google Apps Script v2
-// Gère : entrées vitrine, mises à jour quantité, rebus
-// À coller dans : Extensions > Apps Script de ton Google Sheet
-// ============================================================
-
-const SHEET_ID       = '1GLy0ULz_1inGQbVBeU1h4sDC6hR6gYVeTilHkkihCpI';
-const ONGLET_VITRINE  = 'Vitrine FIFO';
-const ONGLET_JOURNAL  = 'Journal rebus';
-const ONGLET_CATALOGUE= 'Catalogue';
-const ONGLET_VENTES   = 'Ventes Odoo';
-
-// ─── POINT D'ENTRÉE PRINCIPAL ────────────────────────────────
-function doPost(e) {
-  // Sécurité : ignorer les appels sans données
-  if (!e || !e.postData || !e.postData.contents) {
-    return reponse('ok_vide');
-  }
-
-  try {
-    const data = JSON.parse(e.postData.contents);
-    const type = data.type || '';
-    const ss   = SpreadsheetApp.openById(SHEET_ID);
-
-    // Router selon le type d'action
-    switch(type) {
-
-      case 'entree':
-        // Nouvelle entrée vitrine depuis l'outil FIFO
-        return traiterEntree(ss, data);
-
-      case 'vente':
-        // Vente d'une pièce depuis l'outil FIFO
-        return traiterVente(ss, data);
-
-      case 'rebus':
-        // Passage en rebus depuis l'outil FIFO
-        return traiterRebus(ss, data);
-
-      case 'update_qty':
-        // Correction manuelle de quantité
-        return traiterUpdateQty(ss, data);
-
-      default:
-        // Compatibilité avec l'ancien webhook Odoo (ventes POS)
-        if (data.lines || data.order_lines) {
-          return traiterVenteOdoo(ss, data);
-        }
-        return reponse('type_inconnu: ' + type);
-    }
-
-  } catch(err) {
-    Logger.log('Erreur doPost: ' + err.toString());
-    return reponse('erreur: ' + err.toString());
-  }
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>FIFO Vitrine — L'Avenue</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600&family=Instrument+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --cream:    #f7f2ea;
+  --paper:    #fffdf8;
+  --brown:    #3d1f08;
+  --brown2:   #6b3a1f;
+  --brown3:   #9b6040;
+  --gold:     #c4962a;
+  --gold2:    #e8c060;
+  --border:   #ddd4c0;
+  --border2:  #c8b89a;
+  --text:     #1a0f05;
+  --muted:    #7a6a58;
+  --ok:       #2d6a2d;
+  --ok-bg:    #e8f5e8;
+  --warn:     #7a5a00;
+  --warn-bg:  #fdf5d0;
+  --alert:    #8b1a1a;
+  --alert-bg: #fce8e8;
+  --grey-bg:  #f0ebe3;
+  --serif:    'Playfair Display', Georgia, serif;
+  --sans:     'Instrument Sans', system-ui, sans-serif;
+  --r:        12px;
+  --rs:       8px;
+  --shadow:   0 2px 16px rgba(61,31,8,0.08);
 }
 
-// ─── ENTRÉE VITRINE ──────────────────────────────────────────
-function traiterEntree(ss, data) {
-  const sheet = ss.getSheetByName(ONGLET_VITRINE);
-  const now   = new Date();
-  const ts    = data.itemId || now.getTime();
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+html { font-size: 16px; }
+body { font-family: var(--sans); background: var(--cream); color: var(--text); min-height: 100vh; }
 
-  // Calculer la date d'expiration
-  const dateEntree  = data.dateEntree || formatDate(now);
-  const dlc         = parseInt(data.dlc) || 3;
-  const dateExpire  = addDays(dateEntree, dlc);
-  const age         = daysDiff(dateEntree);
-  const statut      = age >= dlc ? 'Expiré' : age === dlc-1 ? 'Expire demain' : 'En cours';
+/* ── HEADER ───────────────────────────── */
+.header {
+  background: var(--brown);
+  padding: 0 24px;
+  height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  box-shadow: 0 2px 20px rgba(0,0,0,0.3);
+}
+.header-brand { display: flex; align-items: center; gap: 12px; }
+.header-logo { font-size: 1.4rem; }
+.header-title { font-family: var(--serif); color: #f5e8cc; font-size: 1.1rem; font-weight: 400; letter-spacing: 0.3px; }
+.header-sub { font-size: 0.65rem; color: rgba(245,232,204,0.55); margin-top: 1px; }
+.header-right { display: flex; align-items: center; gap: 10px; }
+.sync-pill {
+  display: flex; align-items: center; gap: 6px;
+  background: rgba(255,255,255,0.1);
+  border: 1px solid rgba(255,255,255,0.18);
+  border-radius: 99px;
+  padding: 5px 12px;
+  font-size: 0.7rem;
+  color: rgba(245,232,204,0.8);
+}
+.sync-dot { width: 7px; height: 7px; border-radius: 50%; }
+.dot-ok   { background: #4caf50; box-shadow: 0 0 6px #4caf50; }
+.dot-warn { background: #ff9800; }
+.dot-err  { background: #f44336; }
+.header-date { font-size: 0.68rem; color: rgba(245,232,204,0.5); }
 
-  // Ajouter la ligne dans l'onglet Vitrine FIFO
-  // Colonnes : A=ProduitID B=Nom produit C=DateEntrée D=Qté E=DLC F=DateExpiration G=Âge H=Statut I=ItemID J=Timestamp
-  sheet.appendRow([
-    data.produitId || '',
-    data.nomProduit || data.produitId || '',
-    dateEntree,
-    parseInt(data.qty) || 1,
-    dlc,
-    dateExpire,
-    age,
-    statut,
-    ts,
-    Utilities.formatDate(now, 'Africa/Dakar', 'yyyy-MM-dd HH:mm:ss'),
-  ]);
+/* ── LAYOUT ───────────────────────────── */
+.layout { display: flex; min-height: calc(100vh - 60px); }
 
-  Logger.log('Entrée vitrine : ' + data.produitId + ' x' + data.qty + ' le ' + dateEntree);
-  return reponse('entree_ok');
+/* ── SIDEBAR ──────────────────────────── */
+.sidebar {
+  width: 240px;
+  flex-shrink: 0;
+  background: var(--paper);
+  border-right: 1px solid var(--border);
+  padding: 18px 14px;
+  position: sticky;
+  top: 60px;
+  height: calc(100vh - 60px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.sb-section-title {
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: var(--muted);
+  font-weight: 600;
+  margin-bottom: 8px;
 }
 
-// ─── VENTE (depuis l'outil FIFO) ─────────────────────────────
-function traiterVente(ss, data) {
-  const sheet = ss.getSheetByName(ONGLET_VITRINE);
-  const itemId = String(data.itemId || '');
+/* KPIs */
+.kpi-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.kpi {
+  background: var(--cream);
+  border: 1px solid var(--border);
+  border-radius: var(--rs);
+  padding: 10px 8px;
+  text-align: center;
+}
+.kpi-val { font-size: 1.5rem; font-weight: 600; line-height: 1; }
+.kpi-lbl { font-size: 0.6rem; color: var(--muted); margin-top: 3px; line-height: 1.3; }
+.kv-info  { color: var(--brown2); }
+.kv-ok    { color: var(--ok); }
+.kv-warn  { color: var(--warn); }
+.kv-alert { color: var(--alert); }
 
-  if (!itemId) return reponse('vente_ko_pas_id');
+/* Filters */
+.filter-list { display: flex; flex-direction: column; gap: 2px; }
+.fb {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px;
+  border: none; border-radius: var(--rs);
+  background: transparent;
+  font-family: var(--sans); font-size: 0.78rem;
+  color: var(--muted); cursor: pointer; text-align: left;
+  width: 100%; transition: all 0.15s;
+}
+.fb:hover { background: var(--cream); color: var(--text); }
+.fb.active { background: var(--brown); color: #f5e8cc; }
+.fb .fdot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.fb .fcnt {
+  margin-left: auto; font-size: 0.68rem; font-weight: 600;
+  background: rgba(0,0,0,0.1); padding: 1px 7px; border-radius: 99px;
+}
+.fb.active .fcnt { background: rgba(255,255,255,0.2); }
 
-  const rows = sheet.getDataRange().getValues();
+/* Familles */
+.fam-list { display: flex; flex-direction: column; gap: 1px; }
+.fam-btn {
+  display: block; width: 100%; padding: 6px 10px;
+  border: none; background: transparent;
+  font-family: var(--sans); font-size: 0.75rem;
+  color: var(--muted); cursor: pointer; text-align: left;
+  border-radius: var(--rs); transition: all 0.12s;
+}
+.fam-btn:hover { background: var(--cream); color: var(--text); }
+.fam-btn.active { color: var(--brown2); font-weight: 600; }
 
-  for (let i = 1; i < rows.length; i++) {
-    const rowItemId = String(rows[i][8] || '');
-    if (rowItemId !== itemId) continue;
+.sb-add-btn {
+  width: 100%; padding: 9px;
+  border: 1.5px dashed var(--border2);
+  background: transparent; border-radius: var(--rs);
+  font-family: var(--sans); font-size: 0.75rem;
+  color: var(--muted); cursor: pointer;
+  transition: all 0.15s; margin-top: auto;
+}
+.sb-add-btn:hover { border-color: var(--brown2); color: var(--brown2); background: var(--cream); }
 
-    const qteActuelle = parseInt(rows[i][2]) || 0;
-    const nouvelleQte = Math.max(0, qteActuelle - (parseInt(data.qteVendue) || 1));
+/* ── MAIN ─────────────────────────────── */
+.main { flex: 1; padding: 20px; overflow-y: auto; min-width: 0; }
 
-    sheet.getRange(i + 1, 4).setValue(nouvelleQte); // Colonne D = Qté
-    Logger.log('Vente : item ' + itemId + ' qté ' + qteActuelle + ' → ' + nouvelleQte);
-    return reponse('vente_ok');
+.main-toolbar {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 16px; flex-wrap: wrap; gap: 8px;
+}
+.main-title { font-family: var(--serif); font-size: 1.15rem; font-weight: 400; color: var(--brown); }
+.toolbar-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* Buttons */
+.btn {
+  padding: 7px 14px; border-radius: var(--rs);
+  font-family: var(--sans); font-size: 0.75rem; font-weight: 500;
+  cursor: pointer; border: 1px solid var(--border2);
+  background: var(--paper); color: var(--text);
+  transition: all 0.15s; white-space: nowrap;
+}
+.btn:hover { background: var(--cream); }
+.btn-primary { background: var(--brown); color: #f5e8cc; border-color: var(--brown); }
+.btn-primary:hover { background: var(--brown2); border-color: var(--brown2); }
+.btn-ok { background: var(--ok-bg); color: var(--ok); border-color: #aad4aa; }
+.btn-ok:hover { background: #d4ead4; }
+.btn-danger { background: var(--alert-bg); color: var(--alert); border-color: #e0b0b0; }
+.btn-danger:hover { background: #f5d0d0; }
+.btn-sm { padding: 5px 11px; font-size: 0.72rem; }
+.btn-lg { padding: 12px 20px; font-size: 0.85rem; border-radius: 10px; }
+
+/* ── PRODUCT CARDS ────────────────────── */
+.products { display: flex; flex-direction: column; gap: 8px; }
+
+.prod-card {
+  background: var(--paper);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  overflow: hidden;
+  box-shadow: var(--shadow);
+  transition: box-shadow 0.2s;
+}
+.prod-card:hover { box-shadow: 0 4px 24px rgba(61,31,8,0.12); }
+.prod-card.s-alert { border-left: 4px solid var(--alert); }
+.prod-card.s-warn  { border-left: 4px solid #e09020; }
+.prod-card.s-ok    { border-left: 4px solid var(--ok); }
+.prod-card.s-empty { border-left: 4px solid var(--border2); opacity: 0.65; }
+
+.prod-hdr {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 16px; cursor: pointer; user-select: none;
+}
+.prod-hdr:hover { background: rgba(61,31,8,0.02); }
+.status-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.prod-info { flex: 1; min-width: 0; }
+.prod-nom { font-size: 0.85rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.prod-meta { font-size: 0.68rem; color: var(--muted); margin-top: 2px; }
+.prod-chips { display: flex; gap: 5px; align-items: center; flex-wrap: wrap; flex-shrink: 0; }
+
+.chip {
+  display: inline-flex; align-items: center;
+  padding: 2px 9px; border-radius: 99px;
+  font-size: 0.65rem; font-weight: 600; white-space: nowrap;
+}
+.chip-ok    { background: var(--ok-bg); color: var(--ok); }
+.chip-warn  { background: var(--warn-bg); color: var(--warn); }
+.chip-alert { background: var(--alert-bg); color: var(--alert); }
+.chip-grey  { background: var(--grey-bg); color: var(--muted); }
+.chip-dlc   { background: rgba(61,31,8,0.08); color: var(--brown2); }
+.chip-imp   { background: #e8f0fe; color: #1a56a0; }
+.chip-loc   { background: var(--ok-bg); color: var(--ok); }
+
+.toggle-icon { font-size: 1rem; color: var(--muted); transition: transform 0.2s; flex-shrink: 0; }
+.toggle-icon.open { transform: rotate(90deg); }
+.edit-btn { background: transparent; border: none; cursor: pointer; font-size: 0.85rem; padding: 4px; border-radius: 6px; flex-shrink: 0; }
+.edit-btn:hover { background: var(--cream); }
+
+/* ── PROD BODY ────────────────────────── */
+.prod-body { display: none; border-top: 1px solid var(--border); }
+.prod-body.open { display: block; }
+
+.items-table { padding: 10px 16px; }
+.items-hdr {
+  display: grid;
+  grid-template-columns: 24px 1fr 70px 70px 100px 160px;
+  gap: 6px;
+  font-size: 0.6rem; text-transform: uppercase;
+  letter-spacing: 0.8px; color: var(--muted);
+  padding: 0 0 6px; border-bottom: 1px solid var(--border);
+  margin-bottom: 2px;
+}
+.item-row {
+  display: grid;
+  grid-template-columns: 24px 1fr 70px 70px 100px 160px;
+  gap: 6px; align-items: center;
+  padding: 7px 0; border-bottom: 1px solid var(--border);
+  font-size: 0.78rem;
+}
+.item-row:last-child { border-bottom: none; }
+.item-row.expired  { background: #fff8f8; border-radius: 6px; }
+.item-row.expiring { background: #fffbf0; border-radius: 6px; }
+.item-n { color: var(--muted); font-size: 0.65rem; text-align: center; }
+.item-dates { line-height: 1.5; }
+.item-date-main { font-weight: 500; font-size: 0.78rem; }
+.item-date-exp  { font-size: 0.65rem; color: var(--muted); }
+.item-age  { text-align: center; font-size: 0.72rem; color: var(--muted); }
+.item-qty  { text-align: center; font-weight: 600; font-size: 0.9rem; }
+.item-st   { text-align: center; }
+.item-ac   { display: flex; gap: 4px; justify-content: flex-end; }
+
+.empty-state { padding: 16px; text-align: center; color: var(--muted); font-size: 0.78rem; }
+
+/* ── ADD FORM ─────────────────────────── */
+.add-form {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 16px 14px;
+  border-top: 1px dashed var(--border2);
+  flex-wrap: wrap;
+  background: rgba(61,31,8,0.015);
+}
+.add-form label { font-size: 0.72rem; color: var(--muted); white-space: nowrap; }
+.add-form input[type=date],
+.add-form input[type=number] {
+  font-family: var(--sans); font-size: 0.78rem;
+  padding: 5px 10px; border: 1px solid var(--border2);
+  border-radius: var(--rs); background: var(--paper); color: var(--text); outline: none;
+}
+.add-form input[type=date]:focus,
+.add-form input[type=number]:focus { border-color: var(--brown2); }
+.add-form input[type=number] { width: 60px; }
+
+/* ── MODAL ────────────────────────────── */
+.overlay {
+  display: none; position: fixed; inset: 0;
+  background: rgba(26,15,5,0.55); z-index: 200;
+  align-items: center; justify-content: center; padding: 16px;
+}
+.overlay.open { display: flex; }
+.modal {
+  background: var(--paper); border-radius: var(--r);
+  padding: 28px; width: 460px; max-width: 100%;
+  box-shadow: 0 24px 80px rgba(0,0,0,0.3);
+  animation: modal-in 0.2s ease;
+}
+@keyframes modal-in { from { transform: translateY(12px); opacity: 0; } to { transform: none; opacity: 1; } }
+.modal h3 { font-family: var(--serif); font-size: 1.15rem; font-weight: 400; margin-bottom: 20px; color: var(--brown); }
+.fg { margin-bottom: 12px; }
+.fg label { display: block; font-size: 0.72rem; color: var(--muted); margin-bottom: 4px; font-weight: 500; }
+.fg input, .fg select {
+  width: 100%; font-family: var(--sans); font-size: 0.82rem;
+  padding: 8px 12px; border: 1px solid var(--border2);
+  border-radius: var(--rs); background: var(--cream); color: var(--text); outline: none;
+}
+.fg input:focus, .fg select:focus { border-color: var(--brown2); }
+.fr { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.modal-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 20px; }
+
+/* ── TOAST ────────────────────────────── */
+.toast {
+  position: fixed; bottom: 24px; right: 24px;
+  background: var(--brown); color: #f5e8cc;
+  padding: 10px 18px; border-radius: var(--rs);
+  font-size: 0.78rem; font-weight: 500;
+  z-index: 300; opacity: 0; transform: translateY(10px);
+  transition: all 0.25s; pointer-events: none;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+}
+.toast.show { opacity: 1; transform: translateY(0); }
+
+/* ── CONFIG BANNER ────────────────────── */
+.config-banner {
+  background: var(--warn-bg); border-bottom: 1px solid #e8d070;
+  padding: 10px 20px; display: flex; align-items: center;
+  gap: 10px; font-size: 0.78rem; color: var(--warn);
+  flex-wrap: wrap;
+}
+.config-banner input {
+  flex: 1; min-width: 200px; max-width: 360px;
+  padding: 5px 10px; border: 1px solid #e8d070;
+  border-radius: var(--rs); font-family: var(--sans); font-size: 0.78rem;
+  background: #fffdf0; color: var(--text); outline: none;
+}
+
+/* ── LOADING ──────────────────────────── */
+.loading {
+  display: flex; align-items: center; justify-content: center;
+  padding: 40px; color: var(--muted); font-size: 0.85rem; gap: 10px;
+}
+.spinner {
+  width: 18px; height: 18px; border: 2px solid var(--border);
+  border-top-color: var(--brown2); border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── TABLET (≤1024px) ─────────────────── */
+@media (max-width: 1024px) {
+  .sidebar { display: none; }
+  .layout  { display: block; }
+  .main    { padding: 12px; }
+
+  /* Bottom nav tablette */
+  .bottom-nav {
+    display: flex !important;
+    position: fixed; bottom: 0; left: 0; right: 0;
+    background: var(--brown);
+    padding: 8px 4px env(safe-area-inset-bottom);
+    z-index: 50; gap: 4px;
+    box-shadow: 0 -4px 20px rgba(0,0,0,0.25);
   }
-
-  return reponse('vente_ko_item_non_trouve: ' + itemId);
-}
-
-// ─── REBUS ───────────────────────────────────────────────────
-function traiterRebus(ss, data) {
-  // 1. Mettre la quantité à 0 dans l'onglet Vitrine FIFO
-  const sheetVitrine = ss.getSheetByName(ONGLET_VITRINE);
-  const itemId = String(data.itemId || '');
-
-  if (itemId) {
-    const rows = sheetVitrine.getDataRange().getValues();
-    for (let i = 1; i < rows.length; i++) {
-      if (String(rows[i][8] || '') === itemId) {
-        sheetVitrine.getRange(i + 1, 3).setValue(0);
-        break;
-      }
-    }
+  .bottom-nav button {
+    flex: 1; padding: 8px 4px; background: transparent;
+    border: none; border-radius: 8px;
+    font-family: var(--sans); font-size: 0.58rem;
+    color: rgba(245,232,204,0.6); cursor: pointer;
+    display: flex; flex-direction: column;
+    align-items: center; gap: 3px; transition: all 0.15s;
   }
+  .bottom-nav button .bnicon { font-size: 1.2rem; }
+  .bottom-nav button.active { background: rgba(255,255,255,0.15); color: #f5e8cc; }
 
-  // 2. Enregistrer dans le journal des rebus
-  const sheetJournal = ss.getSheetByName(ONGLET_JOURNAL);
-  const now = new Date();
-  sheetJournal.appendRow([
-    Utilities.formatDate(now, 'Africa/Dakar', 'yyyy-MM-dd'),
-    data.produitNom || data.produitId || '',
-    parseInt(data.qty) || 1,
-    data.dateEntree || '',
-    parseInt(data.age) || 0,
-    data.raison || 'DLC dépassée',
-    Utilities.formatDate(now, 'Africa/Dakar', 'HH:mm:ss'),
-  ]);
+  .main { padding-bottom: 80px; }
 
-  Logger.log('Rebus : ' + (data.produitNom || data.produitId) + ' x' + data.qty);
-  return reponse('rebus_ok');
-}
+  /* Cards plus grandes sur tablette */
+  .prod-hdr { padding: 14px 14px; }
+  .prod-nom  { font-size: 0.9rem; }
 
-// ─── MISE À JOUR QUANTITÉ ────────────────────────────────────
-function traiterUpdateQty(ss, data) {
-  const sheet  = ss.getSheetByName(ONGLET_VITRINE);
-  const itemId = String(data.itemId || '');
-  const newQty = parseInt(data.qty);
-
-  if (!itemId) return reponse('update_ko_pas_id');
-
-  const rows = sheet.getDataRange().getValues();
-  for (let i = 1; i < rows.length; i++) {
-    if (String(rows[i][7] || '') === itemId) {
-      sheet.getRange(i + 1, 4).setValue(newQty);
-      Logger.log('Update qté : item ' + itemId + ' → ' + newQty);
-      return reponse('update_ok');
-    }
+  /* Items en version tablette simplifiée */
+  .items-hdr { display: none; }
+  .item-row {
+    grid-template-columns: 1fr auto;
+    grid-template-rows: auto auto;
+    gap: 4px; padding: 10px 0;
   }
+  .item-n   { display: none; }
+  .item-dates { grid-column: 1; grid-row: 1; }
+  .item-age   { display: none; }
+  .item-qty   { grid-column: 2; grid-row: 1; font-size: 1.1rem; text-align: right; }
+  .item-st    { grid-column: 1; grid-row: 2; text-align: left; }
+  .item-ac    { grid-column: 2; grid-row: 2; }
+  .btn-sm     { padding: 7px 12px; font-size: 0.72rem; }
 
-  return reponse('update_ko_item_non_trouve');
+  /* Add form tablette */
+  .add-form { gap: 10px; padding: 12px 14px 16px; }
+  .add-form input[type=date] { font-size: 0.82rem; padding: 8px 10px; }
+  .add-form input[type=number] { width: 65px; font-size: 0.82rem; padding: 8px 10px; }
 }
 
-// ─── VENTES ODOO (compatibilité) ─────────────────────────────
-function traiterVenteOdoo(ss, data) {
-  const sheetVentes = ss.getSheetByName(ONGLET_VENTES);
-  const lignes = extraireLignesOdoo(data);
+@media (min-width: 1025px) {
+  .bottom-nav { display: none; }
+}
 
-  if (lignes.length === 0) return reponse('odoo_rien');
+/* ── NO RESULTS ───────────────────────── */
+.no-results { text-align: center; padding: 48px 20px; color: var(--muted); }
+.no-results .nr-icon { font-size: 2.5rem; margin-bottom: 10px; }
+.no-results p { font-size: 0.85rem; }
+</style>
+</head>
+<body>
 
-  lignes.forEach(ligne => {
-    sheetVentes.appendRow([
-      new Date(),
-      ligne.date_vente,
-      ligne.nom_odoo,
-      ligne.nom_fifo || '',
-      ligne.quantite,
-      ligne.prix_unit,
-      ligne.montant_total,
-      ligne.commande_id,
-    ]);
+<!-- HEADER -->
+<header class="header">
+  <div class="header-brand">
+    <div class="header-logo">🥐</div>
+    <div>
+      <div class="header-title">FIFO Vitrine — Pâtisserie</div>
+      <div class="header-sub">Boulangerie l'Avenue · Dakar</div>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="sync-pill">
+      <div class="sync-dot dot-warn" id="sync-dot"></div>
+      <span id="sync-label">Chargement…</span>
+    </div>
+    <div class="header-date" id="header-date"></div>
+  </div>
+</header>
+
+<!-- CONFIG BANNER -->
+<div class="config-banner" id="config-banner" style="display:none">
+  ⚙️ <strong>Clé API manquante</strong> — Entre ta clé Google API :
+  <input type="password" id="api-key-input" placeholder="AIza...">
+  <button class="btn btn-primary btn-sm" onclick="saveApiKey()">Connecter</button>
+</div>
+
+<div class="layout">
+
+  <!-- SIDEBAR (PC uniquement) -->
+  <aside class="sidebar">
+    <div>
+      <div class="sb-section-title">Vue d'ensemble</div>
+      <div class="kpi-row" id="kpi-row"></div>
+    </div>
+    <div>
+      <div class="sb-section-title">Filtres</div>
+      <div class="filter-list" id="filter-list"></div>
+    </div>
+    <div>
+      <div class="sb-section-title">Par famille</div>
+      <div class="fam-list" id="fam-list"></div>
+    </div>
+    <button class="sb-add-btn" onclick="openAddModal()">+ Ajouter un produit</button>
+  </aside>
+
+  <!-- MAIN -->
+  <main class="main">
+    <div class="main-toolbar">
+      <div class="main-title" id="main-title">Tous les produits</div>
+      <div class="toolbar-actions">
+        <button class="btn btn-sm" onclick="collapseAll()">Replier</button>
+        <button class="btn btn-sm" onclick="expandAll()">Déplier</button>
+        <button class="btn btn-sm btn-primary" onclick="syncSheets()">⟳ Actualiser</button>
+      </div>
+    </div>
+    <div class="products" id="products">
+      <div class="loading"><div class="spinner"></div> Chargement depuis Google Sheets…</div>
+    </div>
+  </main>
+</div>
+
+<!-- BOTTOM NAV (tablette) -->
+<nav class="bottom-nav" id="bottom-nav">
+  <button onclick="setFilter('all',this)" class="active" id="bnav-all">
+    <span class="bnicon">🏠</span>Tous
+  </button>
+  <button onclick="setFilter('alert',this)" id="bnav-alert">
+    <span class="bnicon">🔴</span>Expirés
+  </button>
+  <button onclick="setFilter('warn',this)" id="bnav-warn">
+    <span class="bnicon">🟠</span>Demain
+  </button>
+  <button onclick="setFilter('ok',this)" id="bnav-ok">
+    <span class="bnicon">🟢</span>En cours
+  </button>
+  <button onclick="openAddModal()" id="bnav-add">
+    <span class="bnicon">➕</span>Ajouter
+  </button>
+</nav>
+
+<!-- MODAL PRODUIT -->
+<div class="overlay" id="prod-modal">
+  <div class="modal">
+    <h3 id="modal-title">Ajouter un produit</h3>
+    <div class="fg"><label>Nom du produit *</label><input type="text" id="f-nom" placeholder="Ex : Tarte aux fraises"></div>
+    <div class="fr">
+      <div class="fg">
+        <label>Famille *</label>
+        <select id="f-famille">
+          <option>Choux & éclairs</option>
+          <option>Mousses & bavarois</option>
+          <option>Entremets fruités</option>
+          <option>Tartes fruitées</option>
+          <option>Tartes cuites</option>
+          <option>Finger cakes</option>
+          <option>Feuilletés</option>
+          <option>Biscuits & génoises</option>
+          <option>Entremets chocolat</option>
+          <option>Moelleux & cakes</option>
+          <option>Biscuits secs</option>
+        </select>
+      </div>
+      <div class="fg">
+        <label>DLC vitrine (jours) *</label>
+        <input type="number" id="f-dlc" min="1" max="14" value="3">
+      </div>
+    </div>
+    <div class="fr">
+      <div class="fg">
+        <label>Origine</label>
+        <select id="f-origine">
+          <option value="Import FR">Import France</option>
+          <option value="Local">Production locale</option>
+        </select>
+      </div>
+      <div class="fg">
+        <label>Note</label>
+        <input type="text" id="f-note" placeholder="Ex : Crème fraîche">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-danger btn-sm" id="modal-del" style="display:none" onclick="deleteProd()">Supprimer</button>
+      <div style="display:flex;gap:8px;margin-left:auto">
+        <button class="btn btn-sm" onclick="closeModal()">Annuler</button>
+        <button class="btn btn-primary btn-sm" onclick="saveModal()">Enregistrer</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ═══════════════════════════════════════════════
+// CONFIG
+// ═══════════════════════════════════════════════
+const SHEET_ID   = '1GLy0ULz_1inGQbVBeU1h4sDC6hR6gYVeTilHkkihCpI';
+const SHEET_VITRINE   = 'Vitrine FIFO';
+const SHEET_CATALOGUE = 'Catalogue';
+const SHEET_JOURNAL   = 'Journal rebus';
+const LOCAL_KEY  = 'fifo_avenue_v5';
+const APIKEY_KEY = 'fifo_gapi_key';
+
+// ═══════════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════════
+const $ = id => document.getElementById(id);
+function todayStr(){ return new Date().toISOString().slice(0,10); }
+function daysDiff(d){ const a=new Date(d);a.setHours(0,0,0,0);const b=new Date();b.setHours(0,0,0,0);return Math.floor((b-a)/86400000); }
+function addDays(d,n){ const x=new Date(d);x.setDate(x.getDate()+n);return x.toISOString().slice(0,10); }
+function fmtDate(s){ return new Date(s).toLocaleDateString('fr-FR',{weekday:'short',day:'2-digit',month:'2-digit'}); }
+function genId(){ return Date.now()+Math.random().toString(36).slice(2,5); }
+function toast(msg,dur=2800){ const t=$('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),dur); }
+
+// ═══════════════════════════════════════════════
+// API KEY
+// ═══════════════════════════════════════════════
+let API_KEY = localStorage.getItem(APIKEY_KEY)||'';
+function saveApiKey(){
+  const k=$('api-key-input').value.trim();
+  if(!k){toast('Clé invalide');return;}
+  API_KEY=k;
+  localStorage.setItem(APIKEY_KEY,k);
+  $('config-banner').style.display='none';
+  toast('Clé API enregistrée ✓');
+  init();
+}
+
+// ═══════════════════════════════════════════════
+// ÉTAT LOCAL (fallback si Sheets indisponible)
+// ═══════════════════════════════════════════════
+const CATALOGUE_DEFAULT = [
+  {id:'cadre3choco', nom:'½ CADRE CRAQUANT 3 CHOCOLATS',               famille:'Entremets chocolat',  dlc:4, origine:'Import FR', note:'Chocolat pur'},
+  {id:'fraisier',    nom:'½ CADRE FRAISIER',                           famille:'Entremets fruités',   dlc:2, origine:'Import FR', note:'Fruits frais — fragile'},
+  {id:'mangue',      nom:'½ CADRE MANGUE PASSION',                     famille:'Entremets fruités',   dlc:2, origine:'Import FR', note:'Fruits frais — fragile'},
+  {id:'opera_c',     nom:'½ CADRE OPERA',                              famille:'Biscuits & génoises', dlc:4, origine:'Import FR', note:'Café + chocolat'},
+  {id:'bavarois',    nom:'BAVAROIS INDIVIDUEL SELECTION FRUITS ROUGES',famille:'Mousses & bavarois',  dlc:3, origine:'Import FR', note:'Gélatine'},
+  {id:'macarons',    nom:'BOX MINI MACARONS',                          famille:'Biscuits & génoises', dlc:4, origine:'Import FR', note:'Box de 6'},
+  {id:'brownies',    nom:'BROWNIES SELECTION TOUT CHOCOLAT',           famille:'Biscuits & génoises', dlc:5, origine:'Import FR', note:'Sec'},
+  {id:'canele',      nom:'CANELE BOUCHEE',                             famille:'Biscuits & génoises', dlc:3, origine:'Import FR', note:'Dense et caramélisé'},
+  {id:'cheesecake',  nom:'CHEESECAKE',                                 famille:'Biscuits & génoises', dlc:3, origine:'Import FR', note:'Base fraîche'},
+  {id:'cup_mousse',  nom:'CUP MOUSSE AU CHOCOLAT',                     famille:'Mousses & bavarois',  dlc:3, origine:'Import FR', note:'Mousse'},
+  {id:'tiramisu',    nom:'DOUCEUR TIRAMISU',                           famille:'Mousses & bavarois',  dlc:3, origine:'Import FR', note:'Mascarpone'},
+  {id:'eclair_cafe', nom:'ECLAIR SELECTION CAFE',                      famille:'Choux & éclairs',     dlc:2, origine:'Import FR', note:'Crème fraîche'},
+  {id:'eclair_choc', nom:'ECLAIR SELECTION CHOCOLAT',                  famille:'Choux & éclairs',     dlc:2, origine:'Import FR', note:'Crème fraîche'},
+  {id:'eclair_van',  nom:'ECLAIR SELECTION VANILLE',                   famille:'Choux & éclairs',     dlc:2, origine:'Import FR', note:'Crème fraîche'},
+  {id:'entremet',    nom:'ENTREMETS CROQUANT CHOCOLAT EN BANDE',       famille:'Entremets chocolat',  dlc:4, origine:'Import FR', note:'Chocolat'},
+  {id:'f_caramel',   nom:'FINGER CAKE CARAMEL',                        famille:'Finger cakes',        dlc:3, origine:'Import FR', note:'Ganache'},
+  {id:'f_choco',     nom:'FINGER CAKE CHOCOLAT NOISETTE',              famille:'Finger cakes',        dlc:3, origine:'Import FR', note:'Ganache'},
+  {id:'f_fruits',    nom:'FINGER CAKE FRUITS ROUGES',                  famille:'Finger cakes',        dlc:3, origine:'Import FR', note:'Fruits'},
+  {id:'flan',        nom:'FLAN NATURE',                                famille:'Biscuits & génoises', dlc:3, origine:'Local',     note:'Œufs — fragile'},
+  {id:'foret',       nom:'FORET NOIRE',                                famille:'Biscuits & génoises', dlc:3, origine:'Import FR', note:'Chantilly'},
+  {id:'harmonie',    nom:'HARMONIE CHOCOLAT & PRALINE',                famille:'Mousses & bavarois',  dlc:3, origine:'Import FR', note:'Mousse'},
+  {id:'marquise',    nom:'MARQUISE',                                   famille:'Entremets chocolat',  dlc:4, origine:'Import FR', note:'Chocolat'},
+  {id:'millefeuil',  nom:'MILLEFEUILLE PATISSIER',                     famille:'Feuilletés',          dlc:2, origine:'Import FR', note:'Pâte feuilletée'},
+  {id:'opera',       nom:'OPERA INDIVIDUEL',                           famille:'Biscuits & génoises', dlc:4, origine:'Import FR', note:'Café + chocolat'},
+  {id:'p_brest',     nom:'PARIS BREST ROND',                           famille:'Choux & éclairs',     dlc:2, origine:'Import FR', note:'Crème pralinée'},
+  {id:'plaisir',     nom:'PLAISIR PRALINE',                            famille:'Mousses & bavarois',  dlc:3, origine:'Import FR', note:'Mousse'},
+  {id:'pudding',     nom:'PUDDING',                                    famille:'Biscuits & génoises', dlc:3, origine:'Local',     note:'Œufs'},
+  {id:'t_fraises',   nom:'TARTE AUX FRAISES',                          famille:'Tartes fruitées',     dlc:2, origine:'Import FR', note:'Fruits frais'},
+  {id:'t_framb',     nom:'TARTE AUX FRAMBOISES',                       famille:'Tartes fruitées',     dlc:2, origine:'Import FR', note:'Fruits frais'},
+  {id:'t_citron',    nom:'TARTE CITRON CUITE',                         famille:'Tartes cuites',       dlc:4, origine:'Import FR', note:'Bonne tenue'},
+  {id:'t_pomme',     nom:'TARTE POMME PREDECOUPEE',                    famille:'Tartes cuites',       dlc:4, origine:'Import FR', note:'Bonne tenue'},
+  {id:'tart_cit',    nom:'TARTELETTE CITRON',                          famille:'Tartes cuites',       dlc:4, origine:'Import FR', note:'Bonne tenue'},
+  {id:'trio',        nom:'TRIO MOUSSE CHOCOLAT',                       famille:'Mousses & bavarois',  dlc:3, origine:'Import FR', note:'3 couches'},
+];
+
+function loadLocal(){
+  try{ const s=localStorage.getItem(LOCAL_KEY); if(s) return JSON.parse(s); }catch(e){}
+  return {catalogue:CATALOGUE_DEFAULT, vitrine:{}};
+}
+function saveLocal(){ localStorage.setItem(LOCAL_KEY,JSON.stringify(STATE)); }
+
+let STATE = loadLocal();
+if(!STATE.catalogue) STATE.catalogue=CATALOGUE_DEFAULT;
+if(!STATE.vitrine)   STATE.vitrine={};
+
+// ═══════════════════════════════════════════════
+// GOOGLE SHEETS API
+// ═══════════════════════════════════════════════
+const BASE = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}`;
+
+async function sheetsGet(range){
+  const url=`${BASE}/values/${encodeURIComponent(range)}?key=${API_KEY}`;
+  const r=await fetch(url);
+  if(!r.ok) throw new Error('Sheets GET failed: '+r.status);
+  return r.json();
+}
+
+async function sheetsAppend(range, values){
+  const url=`${BASE}/values/${encodeURIComponent(range)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS&key=${API_KEY}`;
+  const r=await fetch(url,{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({values})
   });
-
-  return reponse('odoo_ok: ' + lignes.length + ' lignes');
+  if(!r.ok) throw new Error('Sheets APPEND failed: '+r.status);
+  return r.json();
 }
 
-// ─── LECTURE (GET) ───────────────────────────────────────────
-// Permet à l'outil de lire l'état de la vitrine
-function doGet(e) {
-  try {
-    const action = (e && e.parameter && e.parameter.action) || 'getVitrine';
-    const ss = SpreadsheetApp.openById(SHEET_ID);
-
-    if (action === 'getVitrine') {
-      const sheet = ss.getSheetByName(ONGLET_VITRINE);
-      const rows  = sheet.getDataRange().getValues();
-      const headers = rows[0];
-      const data = rows.slice(1)
-        .filter(r => parseInt(r[3]) > 0) // seulement les lots avec qté > 0
-        .map(r => ({
-          produitId:   r[0],
-          nomProduit:  r[1] || '',
-          dateEntree:  r[2] ? Utilities.formatDate(new Date(r[2]), 'Africa/Dakar', 'yyyy-MM-dd') : '',
-          qty:         parseInt(r[3]) || 0,
-          dlc:         parseInt(r[4]) || 3,
-          dateExpire:  r[5] ? Utilities.formatDate(new Date(r[5]), 'Africa/Dakar', 'yyyy-MM-dd') : '',
-          age:         parseInt(r[6]) || 0,
-          statut:      r[7] || '',
-          itemId:      String(r[8] || ''),
-        }));
-
-      return reponseJson({ vitrine: data, count: data.length });
-    }
-
-    if (action === 'getCatalogue') {
-      const sheet = ss.getSheetByName(ONGLET_CATALOGUE);
-      const rows  = sheet.getDataRange().getValues();
-      const data  = rows.slice(1).filter(r => r[0]).map(r => ({
-        nom:     r[0],
-        famille: r[1] || '',
-        dlc:     parseInt(r[2]) || 3,
-        origine: r[3] || '',
-        note:    r[4] || '',
-      }));
-      return reponseJson({ catalogue: data });
-    }
-
-    if (action === 'getRebus') {
-      const sheet = ss.getSheetByName(ONGLET_JOURNAL);
-      const rows  = sheet.getDataRange().getValues();
-      const data  = rows.slice(1).filter(r => r[0]).map(r => ({
-        date:       r[0],
-        produit:    r[1],
-        qty:        r[2],
-        dateEntree: r[3],
-        age:        r[4],
-        raison:     r[5],
-      }));
-      return reponseJson({ rebus: data, total: data.reduce((s,r) => s + (parseInt(r.qty)||0), 0) });
-    }
-
-    return reponseJson({ error: 'action inconnue: ' + action });
-
-  } catch(err) {
-    return reponseJson({ error: err.toString() });
-  }
+async function sheetsUpdate(range, values){
+  const url=`${BASE}/values/${encodeURIComponent(range)}?valueInputOption=RAW&key=${API_KEY}`;
+  const r=await fetch(url,{
+    method:'PUT',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({values})
+  });
+  if(!r.ok) throw new Error('Sheets UPDATE failed: '+r.status);
+  return r.json();
 }
 
-// ─── UTILITAIRES ─────────────────────────────────────────────
-function reponse(statut) {
-  return ContentService
-    .createTextOutput(JSON.stringify({ status: statut }))
-    .setMimeType(ContentService.MimeType.JSON);
+async function sheetsDelete(sheetGid, rowIndex){
+  // Supprimer une ligne via batchUpdate
+  const url=`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}:batchUpdate?key=${API_KEY}`;
+  const r=await fetch(url,{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({requests:[{deleteDimension:{range:{sheetId:sheetGid,dimension:'ROWS',startIndex:rowIndex,endIndex:rowIndex+1}}}]})
+  });
+  if(!r.ok) throw new Error('Sheets DELETE failed: '+r.status);
+  return r.json();
 }
 
-function reponseJson(obj) {
-  return ContentService
-    .createTextOutput(JSON.stringify(obj))
-    .setMimeType(ContentService.MimeType.JSON);
-}
-
-function formatDate(d) {
-  return Utilities.formatDate(d, 'Africa/Dakar', 'yyyy-MM-dd');
-}
-
-function addDays(dateStr, n) {
-  const d = new Date(dateStr);
-  d.setDate(d.getDate() + n);
-  return Utilities.formatDate(d, 'Africa/Dakar', 'yyyy-MM-dd');
-}
-
-function daysDiff(dateStr) {
-  const d   = new Date(dateStr); d.setHours(0,0,0,0);
-  const now = new Date();        now.setHours(0,0,0,0);
-  return Math.floor((now - d) / 86400000);
-}
-
-// Extraction lignes ventes Odoo (compatibilité)
-const PRODUITS_IGNORES = ['PROMO TARTE OFFERTE', 'PART DE BUCHE', 'CUP CAKE', 'FLAN CREMEUX'];
-const MAPPING_PRODUITS = {
-  'BOX MINI MACARONS':'BOX MINI MACARONS','BROWNIES SELECTION TOUT CHOCOLAT':'BROWNIES SELECTION TOUT CHOCOLAT',
-  'CANELE BOUCHEE':'CANELE BOUCHEE','CHEESECAKE':'CHEESECAKE','CUP MOUSSE AU CHOCOLAT':'CUP MOUSSE AU CHOCOLAT',
-  'DOUCEUR TIRAMISU':'DOUCEUR TIRAMISU','ECLAIR PARIS BREST':'PARIS BREST ROND','ECLAIR SELECTION CAFE':'ECLAIR SELECTION CAFE',
-  'ECLAIR SELECTION CHOCOLAT':'ECLAIR SELECTION CHOCOLAT','ECLAIR SELECTION VANILLE':'ECLAIR SELECTION VANILLE',
-  'ENTREMETS CROQUANT CHOCOLAT EN BANDE':'ENTREMETS CROQUANT CHOCOLAT EN BANDE','FINGER CAKE CARAMEL':'FINGER CAKE CARAMEL',
-  'FINGER CAKE CHOCOLAT NOISETTE':'FINGER CAKE CHOCOLAT NOISETTE','FINGER CAKE FRUITS ROUGES':'FINGER CAKE FRUITS ROUGES',
-  'FLAN NATURE':'FLAN NATURE','FORET NOIRE':'FORET NOIRE','HARMONIE CHOCOLAT & PRALINE':'HARMONIE CHOCOLAT & PRALINE',
-  'MARQUISE':'MARQUISE','MILLEFEUILLE PATISSIER':'MILLEFEUILLE PATISSIER','OPERA INDIVIDUEL':'OPERA INDIVIDUEL',
-  'PARIS BREST ROND':'PARIS BREST ROND','PLAISIR PRALINE':'PLAISIR PRALINE','PUDDING':'PUDDING',
-  'TARTE AUX FRAISES':'TARTE AUX FRAISES','TARTE AUX FRAMBOISES':'TARTE AUX FRAMBOISES',
-  'TARTE CITRON CUITE':'TARTE CITRON CUITE','TARTE POMME PREDECOUPEE':'TARTE POMME PREDECOUPEE',
-  'TARTELETTE CITRON':'TARTELETTE CITRON','TRIO MOUSSE CHOCOLAT':'TRIO MOUSSE CHOCOLAT',
-  '1/2 CADRE CRAQUANT 3 CHOCOLATS':'½ CADRE CRAQUANT 3 CHOCOLATS','1/2 CADRE FRAISIER':'½ CADRE FRAISIER',
-  '1/2 CADRE MANGUE PASSION':'½ CADRE MANGUE PASSION','1/2 CADRE OPERA':'½ CADRE OPERA',
-  'BAVAROIS INDIVIDUEL SELECTION FRUITS ROUGES':'BAVAROIS INDIVIDUEL SELECTION FRUITS ROUGES',
-};
-
-function extraireLignesOdoo(data) {
-  const today = formatDate(new Date());
-  const lignes = [];
-  const orderLines = data.lines || data.order_lines || [];
-  orderLines.forEach(line => {
-    const nomOdoo = (line.product_name || line.name || '').toUpperCase().trim();
-    if (PRODUITS_IGNORES.includes(nomOdoo)) return;
-    if ((line.price_unit || 0) === 0) return;
-    const qty = parseFloat(line.qty || line.quantity || 0);
-    if (qty <= 0) return;
-    lignes.push({
-      date_vente:    data.date_order || today,
-      nom_odoo:      nomOdoo,
-      nom_fifo:      MAPPING_PRODUITS[nomOdoo] || null,
-      quantite:      qty,
-      prix_unit:     line.price_unit || 0,
-      montant_total: qty * (line.price_unit || 0),
-      commande_id:   data.name || data.id || '',
+// Lire l'état vitrine depuis Sheets
+async function pullVitrine(){
+  const data = await sheetsGet(`${SHEET_VITRINE}!A2:H1000`);
+  const rows = data.values || [];
+  const vitrine = {};
+  rows.forEach((row,idx)=>{
+    if(!row[0]) return;
+    const prodId = row[0];
+    if(!vitrine[prodId]) vitrine[prodId]=[];
+    const qty = parseInt(row[2])||0;
+    if(qty<=0) return;
+    vitrine[prodId].push({
+      id: parseInt(row[7])||idx,
+      sheetRow: idx+2, // ligne réelle dans le sheet (1-indexé, +1 header)
+      dateEntree: row[1]||todayStr(),
+      qty,
+      dlc: parseInt(row[3])||3,
     });
   });
-  return lignes;
+  STATE.vitrine = vitrine;
+  saveLocal();
 }
 
-// ─── INITIALISATION ──────────────────────────────────────────
-function initialiserSheet() {
-  if (!e || !e.postData) {} // pas d'erreur si appelé manuellement
-  const ss = SpreadsheetApp.openById(SHEET_ID);
-  creerOngletVitrine(ss);
-  creerOngletJournal(ss);
-  creerOngletCatalogue(ss);
-  creerOngletVentes(ss);
-  SpreadsheetApp.flush();
-  Logger.log('✅ Sheet initialisé');
+// Lire le catalogue depuis Sheets
+async function pullCatalogue(){
+  const data = await sheetsGet(`${SHEET_CATALOGUE}!A2:F200`);
+  const rows = data.values || [];
+  if(rows.length===0) return;
+  STATE.catalogue = rows.filter(r=>r[0]).map(r=>({
+    id: r[0].toLowerCase().replace(/[^a-z0-9]/g,'_').slice(0,20)+'_'+Math.random().toString(36).slice(2,5),
+    nom: r[0], famille: r[1]||'Autre',
+    dlc: parseInt(r[2])||3, origine: r[3]||'Import FR', note: r[4]||''
+  }));
+  saveLocal();
 }
 
-function creerOngletVitrine(ss) {
-  let s = ss.getSheetByName(ONGLET_VITRINE);
-  if (!s) s = ss.insertSheet(ONGLET_VITRINE);
-  s.clearContents();
-  const h = ['ProduitID','Nom produit','Date entrée','Qté','DLC (jours)','Date expiration','Âge (jours)','Statut','ItemID','Horodatage'];
-  s.getRange(1,1,1,h.length).setValues([h]).setBackground('#3d1f08').setFontColor('#ffffff').setFontWeight('bold');
-  s.setFrozenRows(1);
-  [200,280,110,60,90,130,90,120,120,160].forEach((w,i)=>s.setColumnWidth(i+1,w));
-}
-
-function creerOngletJournal(ss) {
-  let s = ss.getSheetByName(ONGLET_JOURNAL);
-  if (!s) s = ss.insertSheet(ONGLET_JOURNAL);
-  s.clearContents();
-  const h = ['Date','Produit','Qté rebus','Date entrée vitrine','Âge au rebus (j)','Raison','Heure'];
-  s.getRange(1,1,1,h.length).setValues([h]).setBackground('#3d1f08').setFontColor('#ffffff').setFontWeight('bold');
-  s.setFrozenRows(1);
-  [110,280,80,140,130,180,80].forEach((w,i)=>s.setColumnWidth(i+1,w));
-}
-
-function creerOngletCatalogue(ss) {
-  let s = ss.getSheetByName(ONGLET_CATALOGUE);
-  if (!s) s = ss.insertSheet(ONGLET_CATALOGUE);
-  s.clearContents();
-  const h = ['Nom produit','Famille','DLC (jours)','Origine','Note','Prix (CFA)'];
-  s.getRange(1,1,1,h.length).setValues([h]).setBackground('#3d1f08').setFontColor('#ffffff').setFontWeight('bold');
-  s.setFrozenRows(1);
-
-  const produits = [
-    ['½ CADRE CRAQUANT 3 CHOCOLATS','Entremets chocolat',4,'Import FR','Chocolat pur',2500],
-    ['½ CADRE FRAISIER','Entremets fruités',2,'Import FR','Fruits frais — fragile',3000],
-    ['½ CADRE MANGUE PASSION','Entremets fruités',2,'Import FR','Fruits frais — fragile',2500],
-    ['½ CADRE OPERA','Biscuits & génoises',4,'Import FR','Café + chocolat',2500],
-    ['BAVAROIS INDIVIDUEL SELECTION FRUITS ROUGES','Mousses & bavarois',3,'Import FR','Gélatine',2200],
-    ['BOX MINI MACARONS','Biscuits & génoises',4,'Import FR','Box de 6',4200],
-    ['BROWNIES SELECTION TOUT CHOCOLAT','Biscuits & génoises',5,'Import FR','Sec',1200],
-    ['CANELE BOUCHEE','Biscuits & génoises',3,'Import FR','Dense et caramélisé',600],
-    ['CHEESECAKE','Biscuits & génoises',3,'Import FR','Base fraîche',2000],
-    ['CUP MOUSSE AU CHOCOLAT','Mousses & bavarois',3,'Import FR','Mousse',2200],
-    ['DOUCEUR TIRAMISU','Mousses & bavarois',3,'Import FR','Mascarpone',2200],
-    ['ECLAIR SELECTION CAFE','Choux & éclairs',2,'Import FR','Crème fraîche',1800],
-    ['ECLAIR SELECTION CHOCOLAT','Choux & éclairs',2,'Import FR','Crème fraîche',1800],
-    ['ECLAIR SELECTION VANILLE','Choux & éclairs',2,'Import FR','Crème fraîche',1800],
-    ['ENTREMETS CROQUANT CHOCOLAT EN BANDE','Entremets chocolat',4,'Import FR','Chocolat',2500],
-    ['FINGER CAKE CARAMEL','Finger cakes',3,'Import FR','Ganache',2200],
-    ['FINGER CAKE CHOCOLAT NOISETTE','Finger cakes',3,'Import FR','Ganache',2200],
-    ['FINGER CAKE FRUITS ROUGES','Finger cakes',3,'Import FR','Fruits',2200],
-    ['FLAN NATURE','Biscuits & génoises',3,'Local','Œufs — fragile',1500],
-    ['FORET NOIRE','Biscuits & génoises',3,'Import FR','Chantilly',2000],
-    ['HARMONIE CHOCOLAT & PRALINE','Mousses & bavarois',3,'Import FR','Mousse',2500],
-    ['MARQUISE','Entremets chocolat',4,'Import FR','Chocolat',2300],
-    ['MILLEFEUILLE PATISSIER','Feuilletés',2,'Import FR','Pâte feuilletée',2200],
-    ['OPERA INDIVIDUEL','Biscuits & génoises',4,'Import FR','Café + chocolat',2500],
-    ['PARIS BREST ROND','Choux & éclairs',2,'Import FR','Crème pralinée',2400],
-    ['PLAISIR PRALINE','Mousses & bavarois',3,'Import FR','Mousse',2200],
-    ['PUDDING','Biscuits & génoises',3,'Local','Œufs',1000],
-    ['TARTE AUX FRAISES','Tartes fruitées',2,'Import FR','Fruits frais',2000],
-    ['TARTE AUX FRAMBOISES','Tartes fruitées',2,'Import FR','Fruits frais',2000],
-    ['TARTE CITRON CUITE','Tartes cuites',4,'Import FR','Bonne tenue',1600],
-    ['TARTE POMME PREDECOUPEE','Tartes cuites',4,'Import FR','Bonne tenue',1600],
-    ['TARTELETTE CITRON','Tartes cuites',4,'Import FR','Bonne tenue',2000],
-    ['TRIO MOUSSE CHOCOLAT','Mousses & bavarois',3,'Import FR','3 couches',2500],
-  ];
-  s.getRange(2,1,produits.length,produits[0].length).setValues(produits);
-  s.getRange(2,3,produits.length,1).setBackground('#fff3cd').setNote('⚠ Modifiable — colonne DLC');
-  [280,180,90,100,200,100].forEach((w,i)=>s.setColumnWidth(i+1,w));
-}
-
-function creerOngletVentes(ss) {
-  let s = ss.getSheetByName(ONGLET_VENTES);
-  if (!s) s = ss.insertSheet(ONGLET_VENTES);
-  s.clearContents();
-  const h = ['Horodatage','Date vente','Nom Odoo','Nom FIFO','Quantité','Prix unit. (CFA)','Montant (CFA)','N° commande'];
-  s.getRange(1,1,1,h.length).setValues([h]).setBackground('#3d1f08').setFontColor('#ffffff').setFontWeight('bold');
-  s.setFrozenRows(1);
-}
-
-// ─── TEST ────────────────────────────────────────────────────
-function testerEntree() {
-  const payload = {
+// Écrire une entrée vitrine dans Sheets
+async function pushEntree(prodId, nomProduit, dateEntree, qty, dlc){
+  const ts = Date.now();
+  await postToScript({
     type: 'entree',
-    produitId: 'eclair_choco',
-    dateEntree: formatDate(new Date()),
-    qty: 3,
-    dlc: 2,
-    itemId: Date.now(),
-  };
-  const e = { postData: { contents: JSON.stringify(payload) } };
-  const r = doPost(e);
-  Logger.log('Test entrée : ' + r.getContent());
+    produitId: prodId,
+    nomProduit: nomProduit,
+    dateEntree,
+    qty,
+    dlc,
+    itemId: ts,
+  });
+  return ts;
 }
 
-function testerRebus() {
-  const payload = {
-    type: 'rebus',
-    produitId: 'eclair_choco',
-    produitNom: 'ECLAIR SELECTION CHOCOLAT',
-    itemId: '123456',
-    qty: 2,
-    dateEntree: formatDate(new Date()),
-    age: 2,
-    raison: 'DLC dépassée',
-  };
-  const e = { postData: { contents: JSON.stringify(payload) } };
-  const r = doPost(e);
-  Logger.log('Test rebus : ' + r.getContent());
+// Mettre à jour quantité d'un lot via Apps Script
+async function pushUpdateQty(itemId, newQty){
+  await postToScript({
+    type: 'update_qty',
+    itemId: String(itemId),
+    qty: newQty,
+  });
 }
+
+// Enregistrer un rebus via Apps Script
+async function pushRebus(prodNom, dateEntree, qty, age, itemId){
+  await postToScript({
+    type: 'rebus',
+    produitNom: prodNom,
+    dateEntree,
+    qty,
+    age,
+    itemId: String(itemId),
+    raison: 'DLC dépassée',
+  });
+}
+
+// Envoi vers Google Apps Script
+async function postToScript(data){
+  if(!getGsUrl()) throw new Error('Pas d URL Apps Script');
+  const r = await fetch(getGsUrl(), {
+    method: 'POST',
+    mode: 'no-cors',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(data),
+  });
+  return r;
+}
+
+// ═══════════════════════════════════════════════
+// STATUS
+// ═══════════════════════════════════════════════
+function itemStatus(prod,item){
+  const age=daysDiff(item.dateEntree);
+  const rem=(item.dlc||prod.dlc)-age;
+  if(rem<0)  return{label:'Expiré',       cls:'chip-alert',dot:'#8b1a1a',row:'expired', rem};
+  if(rem===0)return{label:'Expire auj.',  cls:'chip-alert',dot:'#c0392b',row:'expired', rem};
+  if(rem===1)return{label:'Expire demain',cls:'chip-warn', dot:'#e09020',row:'expiring',rem};
+  return        {label:`J+${rem}`,        cls:'chip-ok',   dot:'#2d6a2d',row:'',         rem};
+}
+function prodStatus(prod){
+  const items=STATE.vitrine[prod.id]||[];
+  if(!items.length) return 'empty';
+  let w='ok';
+  for(const i of items){
+    const s=itemStatus(prod,i);
+    if(s.rem<=0) return 'alert';
+    if(s.rem===1&&w!=='alert') w='warn';
+  }
+  return w;
+}
+function totalQty(pid){ return (STATE.vitrine[pid]||[]).reduce((s,i)=>s+i.qty,0); }
+
+// ═══════════════════════════════════════════════
+// UI STATE
+// ═══════════════════════════════════════════════
+let currentFilter='all', currentFamille=null, editingProdId=null;
+
+function setFilter(f,btn){
+  currentFilter=f; currentFamille=null;
+  // Update bottom nav
+  document.querySelectorAll('.bottom-nav button').forEach(b=>b.classList.remove('active'));
+  if(btn) btn.classList.add('active');
+  $('main-title').textContent = {all:'Tous les produits',alert:'Expirés',warn:'Expire demain',ok:'En cours',empty:'Vitrine vide'}[f]||f;
+  renderProducts();
+  renderSidebar();
+}
+function setFamille(f){
+  currentFamille=f; currentFilter='all';
+  $('main-title').textContent=f||'Tous les produits';
+  renderProducts(); renderSidebar();
+}
+
+// ═══════════════════════════════════════════════
+// RENDER
+// ═══════════════════════════════════════════════
+function renderAll(){ renderSidebar(); renderProducts(); }
+
+function renderSidebar(){
+  const counts={ok:0,warn:0,alert:0,empty:0};
+  STATE.catalogue.forEach(p=>counts[prodStatus(p)]++);
+  const total=STATE.catalogue.length;
+
+  $('kpi-row').innerHTML=`
+    <div class="kpi"><div class="kpi-val kv-info">${total}</div><div class="kpi-lbl">Références</div></div>
+    <div class="kpi"><div class="kpi-val kv-ok">${counts.ok}</div><div class="kpi-lbl">En cours</div></div>
+    <div class="kpi"><div class="kpi-val kv-warn">${counts.warn}</div><div class="kpi-lbl">Expire demain</div></div>
+    <div class="kpi"><div class="kpi-val kv-alert">${counts.alert}</div><div class="kpi-lbl">Expirés</div></div>`;
+
+  const filters=[
+    {k:'all',  l:'Tous les produits', d:'#888',   cnt:total},
+    {k:'alert',l:'Expirés',           d:'#8b1a1a',cnt:counts.alert},
+    {k:'warn', l:'Expire demain',     d:'#e09020',cnt:counts.warn},
+    {k:'ok',   l:'En cours',          d:'#2d6a2d',cnt:counts.ok},
+    {k:'empty',l:'Vitrine vide',      d:'#b0a090',cnt:counts.empty},
+  ];
+  $('filter-list').innerHTML=filters.map(f=>`
+    <button class="fb ${currentFilter===f.k&&!currentFamille?'active':''}" onclick="setFilter('${f.k}',this)">
+      <div class="fdot" style="background:${f.d}"></div>${f.l}
+      <span class="fcnt">${f.cnt}</span>
+    </button>`).join('');
+
+  const fams=[...new Set(STATE.catalogue.map(p=>p.famille))].sort();
+  $('fam-list').innerHTML=`<button class="fam-btn ${!currentFamille?'active':''}" onclick="setFamille(null)">Toutes les familles</button>`
+    +fams.map(f=>`<button class="fam-btn ${currentFamille===f?'active':''}" onclick="setFamille('${f}')">${f}</button>`).join('');
+
+  // Update bottom nav badges
+  const bnAlert=$('bnav-alert');
+  if(counts.alert>0) bnAlert.querySelector('.bnicon').textContent='🔴';
+}
+
+function renderProducts(){
+  const grid=$('products');
+  const order={alert:0,warn:1,ok:2,empty:3};
+  let prods=STATE.catalogue.filter(p=>{
+    if(currentFilter!=='all'&&prodStatus(p)!==currentFilter) return false;
+    if(currentFamille&&p.famille!==currentFamille) return false;
+    return true;
+  }).sort((a,b)=>order[prodStatus(a)]-order[prodStatus(b)]||a.famille.localeCompare(b.famille)||a.nom.localeCompare(b.nom));
+
+  if(!prods.length){
+    grid.innerHTML='<div class="no-results"><div class="nr-icon">🔍</div><p>Aucun produit dans cette catégorie.</p></div>';
+    return;
+  }
+  grid.innerHTML='';
+  prods.forEach(prod=>grid.appendChild(buildCard(prod)));
+}
+
+function buildCard(prod){
+  const status=prodStatus(prod);
+  const items=(STATE.vitrine[prod.id]||[]).slice().sort((a,b)=>new Date(a.dateEntree)-new Date(b.dateEntree));
+  const qty=totalQty(prod.id);
+  const dotColor=status==='alert'?'#8b1a1a':status==='warn'?'#e09020':status==='ok'?'#2d6a2d':'#c8b89a';
+  const badgeCls=status==='alert'?'chip-alert':status==='warn'?'chip-warn':status==='ok'?'chip-ok':'chip-grey';
+  const badgeTxt=status==='empty'?'Vitrine vide':`${qty} pièce${qty>1?'s':''} en vitrine`;
+
+  const card=document.createElement('div');
+  card.className=`prod-card s-${status}`;
+  card.id=`card-${prod.id}`;
+
+  // Items HTML
+  let itemsHtml='';
+  if(!items.length){
+    itemsHtml='<div class="empty-state">Vitrine vide — enregistrez une entrée ci-dessous.</div>';
+  } else {
+    itemsHtml=`<div class="items-table">
+      <div class="items-hdr"><span>#</span><span>Entrée vitrine</span><span style="text-align:center">Âge</span><span style="text-align:center">Qté</span><span style="text-align:center">Statut DLC</span><span style="text-align:right">Actions</span></div>`;
+    items.forEach((item,idx)=>{
+      const s=itemStatus(prod,item);
+      const exp=addDays(item.dateEntree,item.dlc||prod.dlc);
+      itemsHtml+=`<div class="item-row ${s.row}">
+        <div class="item-n">${idx+1}</div>
+        <div class="item-dates"><div class="item-date-main">${fmtDate(item.dateEntree)}</div><div class="item-date-exp">Expire ${fmtDate(exp)}</div></div>
+        <div class="item-age">J+${daysDiff(item.dateEntree)}</div>
+        <div class="item-qty">${item.qty}</div>
+        <div class="item-st"><span class="chip ${s.cls}">${s.label}</span></div>
+        <div class="item-ac">
+          <button class="btn btn-ok btn-sm" onclick="sellOne('${prod.id}',${item.id})">✓ Vendre 1</button>
+          <button class="btn btn-sm" onclick="adjQty('${prod.id}',${item.id})">Qté</button>
+          <button class="btn btn-danger btn-sm" onclick="rebusItem('${prod.id}',${item.id})">Rebus</button>
+        </div>
+      </div>`;
+    });
+    itemsHtml+='</div>';
+  }
+
+  const addForm=`<div class="add-form">
+    <label>Entrée :</label>
+    <input type="date" id="d-${prod.id}" value="${todayStr()}" max="${todayStr()}">
+    <label>Qté :</label>
+    <input type="number" id="q-${prod.id}" value="1" min="1" max="50">
+    <button class="btn btn-primary btn-sm" onclick="addItem('${prod.id}')">+ Ajouter en vitrine</button>
+  </div>`;
+
+  card.innerHTML=`
+    <div class="prod-hdr" onclick="toggleCard('${prod.id}')">
+      <div class="status-dot" style="background:${dotColor}"></div>
+      <div class="prod-info">
+        <div class="prod-nom">${prod.nom}</div>
+        <div class="prod-meta">${prod.famille}${prod.note?' · '+prod.note:''}</div>
+      </div>
+      <div class="prod-chips">
+        <span class="chip ${badgeCls}">${badgeTxt}</span>
+        <span class="chip chip-dlc">DLC ${prod.dlc}j</span>
+        <span class="chip ${prod.origine==='Import FR'?'chip-imp':'chip-loc'}">${prod.origine}</span>
+      </div>
+      <span class="toggle-icon" id="ico-${prod.id}">›</span>
+      <button class="edit-btn" onclick="event.stopPropagation();openEditModal('${prod.id}')" title="Modifier">✏️</button>
+    </div>
+    <div class="prod-body" id="body-${prod.id}">${itemsHtml}${addForm}</div>`;
+
+  // Auto-ouvrir alertes
+  if(status==='alert'||status==='warn'){
+    card.querySelector('.prod-body').classList.add('open');
+    card.querySelector('.toggle-icon').classList.add('open');
+  }
+  return card;
+}
+
+// ═══════════════════════════════════════════════
+// ACTIONS
+// ═══════════════════════════════════════════════
+function toggleCard(pid){
+  const b=$(`body-${pid}`),i=$(`ico-${pid}`);
+  if(!b)return;
+  b.classList.toggle('open');
+  i.classList.toggle('open');
+}
+function expandAll(){ document.querySelectorAll('.prod-body').forEach(b=>b.classList.add('open')); document.querySelectorAll('.toggle-icon').forEach(i=>i.classList.add('open')); }
+function collapseAll(){ document.querySelectorAll('.prod-body').forEach(b=>b.classList.remove('open')); document.querySelectorAll('.toggle-icon').forEach(i=>i.classList.remove('open')); }
+
+async function addItem(pid){
+  const prod=STATE.catalogue.find(p=>p.id===pid);
+  if(!prod) return;
+  const date=($(`d-${pid}`)||{}).value||todayStr();
+  const qty=parseInt(($(`q-${pid}`)||{}).value)||1;
+  const ts=Date.now();
+  if(!STATE.vitrine[pid]) STATE.vitrine[pid]=[];
+  STATE.vitrine[pid].push({id:ts,dateEntree:date,qty,dlc:prod.dlc});
+  saveLocal();
+  renderAll();
+  toast('Entrée enregistrée ✓');
+  // Sync via Apps Script en arrière-plan
+  if(getGsUrl()){
+    try{ await pushEntree(pid,prod.nom,date,qty,prod.dlc); }
+    catch(e){ console.log('Script sync entree:',e); toast('⚠ Sheet non synchronisé — données sauvées localement'); }
+  }
+}
+
+async function sellOne(pid,itemId){
+  const items=STATE.vitrine[pid]||[];
+  const item=items.find(i=>i.id===itemId);
+  if(!item)return;
+  const oldQty=item.qty;
+  if(item.qty>1){ item.qty--; }
+  else{ STATE.vitrine[pid]=items.filter(i=>i.id!==itemId); }
+  saveLocal(); renderAll();
+  toast('1 vente enregistrée ✓');
+  if(getGsUrl()){
+    try{
+      if(oldQty>1){ await pushUpdateQty(item.id, item.qty); }
+      else{ await pushUpdateQty(item.id, 0); }
+    }catch(e){ console.log('Script sync sell:',e); }
+  }
+}
+
+async function adjQty(pid,itemId){
+  const items=STATE.vitrine[pid]||[];
+  const item=items.find(i=>i.id===itemId);
+  if(!item)return;
+  const n=parseInt(prompt(`Nouvelle quantité (actuel : ${item.qty}) :`,item.qty));
+  if(isNaN(n)||n<0){toast('Quantité invalide');return;}
+  if(n===0){ STATE.vitrine[pid]=items.filter(i=>i.id!==itemId); }
+  else{ item.qty=n; }
+  saveLocal(); renderAll();
+  toast('Quantité mise à jour');
+  if(getGsUrl()){
+    try{ await pushUpdateQty(item.id, n); }catch(e){}
+  }
+}
+
+async function rebusItem(pid,itemId){
+  const prod=STATE.catalogue.find(p=>p.id===pid);
+  const items=STATE.vitrine[pid]||[];
+  const item=items.find(i=>i.id===itemId);
+  if(!item)return;
+  if(!confirm(`Passer ${item.qty} pièce(s) en rebus ?`))return;
+  const age=daysDiff(item.dateEntree);
+  STATE.vitrine[pid]=items.filter(i=>i.id!==itemId);
+  saveLocal(); renderAll();
+  toast(`${item.qty} pièce(s) passée(s) en rebus`);
+  if(getGsUrl()){
+    try{
+      await pushRebus(prod?.nom||pid, item.dateEntree, item.qty, age, item.id);
+    }catch(e){ console.log('Script sync rebus:',e); }
+  }
+}
+
+// ═══════════════════════════════════════════════
+// SYNC
+// ═══════════════════════════════════════════════
+async function syncSheets(){
+  if(!API_KEY){ toast('Configure la clé API d\'abord'); return; }
+  setSyncStatus('Synchronisation…','dot-warn');
+  try{
+    await pullVitrine();
+    await pullCatalogue();
+    setSyncStatus('Synchronisé','dot-ok');
+    toast('Données actualisées depuis Google Sheets ✓');
+    renderAll();
+  }catch(e){
+    setSyncStatus('Erreur connexion','dot-err');
+    toast('Erreur de connexion — vérifier la clé API');
+    console.error(e);
+  }
+}
+
+function setSyncStatus(label,dotCls){
+  $('sync-label').textContent=label;
+  const d=$('sync-dot');
+  d.className='sync-dot '+dotCls;
+}
+
+// ═══════════════════════════════════════════════
+// MODAL
+// ═══════════════════════════════════════════════
+function openAddModal(){
+  editingProdId=null;
+  $('modal-title').textContent='Ajouter un produit';
+  $('f-nom').value=''; $('f-famille').value='Choux & éclairs';
+  $('f-dlc').value=3; $('f-origine').value='Import FR'; $('f-note').value='';
+  $('modal-del').style.display='none';
+  $('prod-modal').classList.add('open');
+  setTimeout(()=>$('f-nom').focus(),60);
+}
+function openEditModal(pid){
+  const p=STATE.catalogue.find(x=>x.id===pid);
+  if(!p)return;
+  editingProdId=pid;
+  $('modal-title').textContent='Modifier le produit';
+  $('f-nom').value=p.nom; $('f-famille').value=p.famille;
+  $('f-dlc').value=p.dlc; $('f-origine').value=p.origine; $('f-note').value=p.note||'';
+  $('modal-del').style.display='inline-flex';
+  $('prod-modal').classList.add('open');
+}
+function closeModal(){ $('prod-modal').classList.remove('open'); editingProdId=null; }
+function saveModal(){
+  const nom=$('f-nom').value.trim();
+  if(!nom){alert('Le nom est obligatoire.');return;}
+  const dlc=parseInt($('f-dlc').value);
+  if(!dlc||dlc<1){alert('DLC ≥ 1 jour.');return;}
+  if(editingProdId){
+    const p=STATE.catalogue.find(x=>x.id===editingProdId);
+    if(p){p.nom=nom;p.famille=$('f-famille').value;p.dlc=dlc;p.origine=$('f-origine').value;p.note=$('f-note').value.trim();}
+    toast('Produit modifié ✓');
+  }else{
+    STATE.catalogue.push({id:genId(),nom,famille:$('f-famille').value,dlc,origine:$('f-origine').value,note:$('f-note').value.trim()});
+    toast('Produit ajouté ✓');
+  }
+  saveLocal(); closeModal(); renderAll();
+}
+function deleteProd(){
+  if(!editingProdId)return;
+  const p=STATE.catalogue.find(x=>x.id===editingProdId);
+  if(!p||!confirm(`Supprimer "${p.nom}" ?`))return;
+  STATE.catalogue=STATE.catalogue.filter(x=>x.id!==editingProdId);
+  delete STATE.vitrine[editingProdId];
+  saveLocal(); toast('Produit supprimé'); closeModal(); renderAll();
+}
+$('prod-modal').addEventListener('click',e=>{ if(e.target===$('prod-modal'))closeModal(); });
+
+// Helper pour récupérer l'URL du script
+function getGsUrl(){
+  try{ return JSON.parse(localStorage.getItem('fifo_avenue_config')||'{}').gsUrl||''; }catch(e){ return ''; }
+}
+// ═══════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════
+async function init(){
+  // Date header
+  $('header-date').textContent=new Date().toLocaleDateString('fr-FR',{weekday:'long',day:'2-digit',month:'long'});
+
+  if(!API_KEY){
+    $('config-banner').style.display='flex';
+    setSyncStatus('Clé API requise','dot-err');
+    renderAll();
+    return;
+  }
+
+  // Charger le catalogue depuis Sheets (lecture seule)
+  setSyncStatus('Chargement catalogue…','dot-warn');
+  try{
+    await pullCatalogue();
+    setSyncStatus('Synchronisé','dot-ok');
+    toast('Catalogue chargé depuis Google Sheets ✓');
+  }catch(e){
+    setSyncStatus('Mode local','dot-warn');
+    console.error('Catalogue non chargé:', e);
+  }
+  // La vitrine est gérée localement
+  renderAll();
+}
+
+init();
+</script>
+</body>
+</html>
