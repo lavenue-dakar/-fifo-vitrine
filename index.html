@@ -734,7 +734,7 @@ async function pushUpdateQty(itemId, newQty){
 }
 
 // Enregistrer un rebus via Apps Script
-async function pushRebus(prodNom, dateEntree, qty, age, itemId){
+async function pushRebus(prodNom, dateEntree, qty, age, itemId, qteRestante){
   await postToScript({
     type: 'rebus',
     produitNom: prodNom,
@@ -742,6 +742,7 @@ async function pushRebus(prodNom, dateEntree, qty, age, itemId){
     qty,
     age,
     itemId: String(itemId),
+    qteRestante: qteRestante || 0,
     raison: 'DLC dépassée',
   });
 }
@@ -1025,7 +1026,7 @@ async function rebusItem(pid,itemId){
 
   if(getGsUrl()){
     try{
-      await pushRebus(prod?.nom||pid, item.dateEntree, qteRebus, age, item.id);
+      await pushRebus(prod?.nom||pid, item.dateEntree, qteRebus, age, item.id, qteRestante);
       if(qteRestante > 0){
         await pushUpdateQty(item.id, qteRestante);
       }
