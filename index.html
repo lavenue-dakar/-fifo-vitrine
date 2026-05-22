@@ -547,6 +547,8 @@ body { font-family: var(--sans); background: var(--cream); color: var(--text); m
 // CONFIG
 // ═══════════════════════════════════════════════
 const SHEET_ID   = '1GLy0ULz_1inGQbVBeU1h4sDC6hR6gYVeTilHkkihCpI';
+const GS_URL     = 'https://script.google.com/macros/s/AKfycbxmRuMCa_UucrKRwd2uZlSC_yxgRH-iUxQcV3Sdf8u_8P8dfqkG1YKETcxayRDqmUY/exec';
+const API_KEY_HC = 'AIzaSyCLPVquKssDuiP1-EF3IYBYNvViu4fVd5c';
 const SHEET_VITRINE   = 'Vitrine FIFO';
 const SHEET_CATALOGUE = 'Catalogue';
 const SHEET_JOURNAL   = 'Journal rebus';
@@ -567,7 +569,7 @@ function toast(msg,dur=2800){ const t=$('toast');t.textContent=msg;t.classList.a
 // ═══════════════════════════════════════════════
 // API KEY
 // ═══════════════════════════════════════════════
-let API_KEY = localStorage.getItem(APIKEY_KEY)||'';
+let API_KEY = API_KEY_HC || localStorage.getItem(APIKEY_KEY)||'';
 function saveApiKey(){
   const k=$('api-key-input').value.trim();
   if(!k){toast('Clé invalide');return;}
@@ -1109,7 +1111,9 @@ function deleteProd(){
 $('prod-modal').addEventListener('click',e=>{ if(e.target===$('prod-modal'))closeModal(); });
 
 // Helper pour récupérer l'URL du script
+// Utilise la constante intégrée en priorité, sinon localStorage
 function getGsUrl(){
+  if(GS_URL) return GS_URL;
   try{ return JSON.parse(localStorage.getItem('fifo_avenue_config')||'{}').gsUrl||''; }catch(e){ return ''; }
 }
 // ═══════════════════════════════════════════════
@@ -1119,9 +1123,10 @@ async function init(){
   // Date header
   $('header-date').textContent=new Date().toLocaleDateString('fr-FR',{weekday:'long',day:'2-digit',month:'long'});
 
-  if(!API_KEY){
-    $('config-banner').style.display='flex';
-    setSyncStatus('Clé API requise','dot-err');
+  // Config intégrée — pas besoin de banner
+  $('config-banner').style.display='none';
+  if(!API_KEY && !getGsUrl()){
+    setSyncStatus('Configuration manquante','dot-err');
     renderAll();
     return;
   }
