@@ -547,6 +547,7 @@ body { font-family: var(--sans); background: var(--cream); color: var(--text); m
 // CONFIG
 // ═══════════════════════════════════════════════
 const SHEET_ID   = '1GLy0ULz_1inGQbVBeU1h4sDC6hR6gYVeTilHkkihCpI';
+const ADMIN_PIN  = '2605'; // Code PIN pour modifier les produits — à changer si besoin
 const GS_URL     = 'https://script.google.com/macros/s/AKfycbxmRuMCa_UucrKRwd2uZlSC_yxgRH-iUxQcV3Sdf8u_8P8dfqkG1YKETcxayRDqmUY/exec';
 const API_KEY_HC = 'AIzaSyCLPVquKssDuiP1-EF3IYBYNvViu4fVd5c';
 const SHEET_VITRINE   = 'Vitrine FIFO';
@@ -746,11 +747,13 @@ async function pushEntree(prodId, nomProduit, dateEntree, qty, dlc){
 }
 
 // Mettre à jour quantité d'un lot via Apps Script
-async function pushUpdateQty(itemId, newQty){
+async function pushUpdateQty(itemId, newQty, nomProduit, dateEntree){
   await postToScript({
     type: 'update_qty',
     itemId: String(itemId),
     qty: newQty,
+    nomProduit: nomProduit||'',
+    dateEntree: dateEntree||'',
   });
 }
 
@@ -991,8 +994,9 @@ async function sellOne(pid,itemId){
   toast('1 vente enregistrée ✓');
   if(getGsUrl()){
     try{
-      if(oldQty>1){ await pushUpdateQty(item.id, item.qty); }
-      else{ await pushUpdateQty(item.id, 0); }
+      const prod2=STATE.catalogue.find(p=>p.id===pid);
+      if(oldQty>1){ await pushUpdateQty(item.id, item.qty, prod2?.nom, item.dateEntree); }
+      else{ await pushUpdateQty(item.id, 0, prod2?.nom, item.dateEntree); }
     }catch(e){ console.log('Script sync sell:',e); }
   }
 }
@@ -1008,7 +1012,7 @@ async function adjQty(pid,itemId){
   saveLocal(); renderAll();
   toast('Quantité mise à jour');
   if(getGsUrl()){
-    try{ await pushUpdateQty(item.id, n); }catch(e){}
+    try{ const prod3=STATE.catalogue.find(p=>p.id===pid); await pushUpdateQty(item.id, n, prod3?.nom, item.dateEntree); }catch(e){}
   }
 }
 
@@ -1049,7 +1053,7 @@ async function rebusItem(pid,itemId){
     try{
       await pushRebus(prod?.nom||pid, item.dateEntree, qteRebus, age, item.id, qteRestante);
       if(qteRestante > 0){
-        await pushUpdateQty(item.id, qteRestante);
+        await pushUpdateQty(item.id, qteRestante, prod?.nom, item.dateEntree);
       }
     }catch(e){ console.log('Script sync rebus:',e); }
   }
@@ -1084,6 +1088,9 @@ function setSyncStatus(label,dotCls){
 // MODAL
 // ═══════════════════════════════════════════════
 function openAddModal(){
+  verifierPin(()=>_openAddModal());
+}
+function _openAddModal(){
   editingProdId=null;
   $('modal-title').textContent='Ajouter un produit';
   $('f-nom').value=''; $('f-famille').value='Choux & éclairs';
@@ -1092,7 +1099,17 @@ function openAddModal(){
   $('prod-modal').classList.add('open');
   setTimeout(()=>$('f-nom').focus(),60);
 }
+function verifierPin(callback){
+  const pin = prompt('🔐 Code administrateur requis :');
+  if(pin===null) return; // Annulé
+  if(pin===ADMIN_PIN){ callback(); }
+  else{ toast('❌ Code incorrect'); }
+}
+
 function openEditModal(pid){
+  verifierPin(()=>_openEditModal(pid));
+}
+function _openEditModal(pid){
   const p=STATE.catalogue.find(x=>x.id===pid);
   if(!p)return;
   editingProdId=pid;
