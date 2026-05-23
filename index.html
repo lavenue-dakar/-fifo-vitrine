@@ -684,35 +684,50 @@ async function pullVitrine(){
   const data = await r.json();
   if(!data.vitrine) return;
   
+  // Utiliser le catalogue courant (déjà chargé par pullCatalogue)
+  const catalogue = STATE.catalogue;
+  console.log('pullVitrine: catalogue size=', catalogue.length, 'items vitrine=', data.vitrine.length);
+  
   const vitrine = {};
   data.vitrine.forEach(item=>{
-    if(!parseInt(item.qty)||parseInt(item.qty)<=0) return;
+    const qty = parseInt(item.qty);
+    if(!qty || qty<=0) return;
     
-    // Trouver le produit dans le catalogue par son nom (nomProduit) ou son ID
+    // Trouver le produit dans le catalogue par son nom exact
     let prod = null;
     if(item.nomProduit){
-      prod = STATE.catalogue.find(p=>p.nom===item.nomProduit);
+      prod = catalogue.find(p=>p.nom===item.nomProduit);
     }
     if(!prod && item.produitId){
-      prod = STATE.catalogue.find(p=>p.id===item.produitId);
+      prod = catalogue.find(p=>p.id===item.produitId);
     }
-    if(!prod) return; // Produit introuvable dans le catalogue
     
-    const pid = prod.id; // Utiliser l'ID du catalogue, pas celui stocké dans Sheets
+    console.log('pullVitrine item:', item.nomProduit, 'prod trouvé:', prod?.id);
+    
+    if(!prod){
+      console.log('ATTENTION: produit non trouvé pour', item.nomProduit);
+      return;
+    }
+    
+    const pid = prod.id;
     if(!vitrine[pid]) vitrine[pid]=[];
     
     const rawId = item.itemId;
     const itemId = (rawId && rawId !== 'Invalid Date' && !isNaN(parseInt(rawId)))
       ? parseInt(rawId)
-      : Date.now() + Math.random();
+      : Date.now() + Math.floor(Math.random()*1000);
     
     vitrine[pid].push({
       id: itemId,
-      dateEntree: item.dateEntree||todayStr(),
-      qty: parseInt(item.qty)||0,
-      dlc: parseInt(item.dlc)||prod.dlc||3,
+      dateEntree: item.dateEntree || todayStr(),
+      qty,
+      dlc: parseInt(item.dlc) || prod.dlc || 3,
     });
+    
+    console.log('pullVitrine: ajouté', prod.nom, 'qty=', qty, 'dans', pid);
   });
+  
+  console.log('pullVitrine résultat:', JSON.stringify(Object.keys(vitrine)));
   STATE.vitrine = vitrine;
   saveLocal();
 }
