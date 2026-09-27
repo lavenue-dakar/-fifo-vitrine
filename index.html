@@ -164,6 +164,26 @@ body { font-family: var(--sans); background: var(--cream); color: var(--text); m
 .main-title { font-family: var(--serif); font-size: 1.15rem; font-weight: 400; color: var(--brown); }
 .toolbar-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 
+/* Recherche */
+.search-bar {
+  position: sticky; top: 60px; z-index: 20;
+  display: flex; align-items: center; gap: 8px;
+  background: var(--paper); border: 1.5px solid var(--border2);
+  border-radius: var(--r); padding: 4px 8px 4px 12px;
+  margin: 0 0 16px; box-shadow: var(--shadow);
+}
+.search-bar:focus-within { border-color: var(--brown2); }
+.search-ico { font-size: 0.95rem; opacity: 0.6; }
+.search-bar input {
+  flex: 1; min-width: 0; border: none; outline: none; background: transparent;
+  font-family: var(--sans); font-size: 1rem; color: var(--text); padding: 9px 0;
+}
+.search-bar input::-webkit-search-cancel-button { display: none; }
+.search-clear {
+  border: none; background: var(--grey-bg); color: var(--muted);
+  width: 30px; height: 30px; border-radius: 50%; cursor: pointer; font-size: 0.85rem;
+}
+
 /* Buttons */
 .btn {
   padding: 7px 14px; border-radius: var(--rs);
@@ -464,6 +484,12 @@ body { font-family: var(--sans); background: var(--cream); color: var(--text); m
         <button class="btn btn-sm" onclick="expandAll()">Déplier</button>
         <button class="btn btn-sm btn-primary" onclick="syncSheets()">⟳ Actualiser</button>
       </div>
+    </div>
+    <div class="search-bar">
+      <span class="search-ico">🔍</span>
+      <input type="search" id="search-input" placeholder="Rechercher un produit (ex : éclair choco)…"
+             autocomplete="off" oninput="onSearch(this.value)">
+      <button class="search-clear" id="search-clear" onclick="clearSearch()" title="Effacer" style="display:none">✕</button>
     </div>
     <div class="products" id="products">
       <div class="loading"><div class="spinner"></div> Chargement depuis Google Sheets…</div>
@@ -839,6 +865,7 @@ function totalQty(pid){ return (STATE.vitrine[pid]||[]).reduce((s,i)=>s+i.qty,0)
 let currentFilter='all', currentFamille=null, editingProdId=null;
 
 function setFilter(f,btn){
+  resetSearch();
   currentFilter=f; currentFamille=null;
   // Update bottom nav
   document.querySelectorAll('.bottom-nav button').forEach(b=>b.classList.remove('active'));
@@ -848,6 +875,7 @@ function setFilter(f,btn){
   renderSidebar();
 }
 function setFamille(f){
+  resetSearch();
   currentFamille=f; currentFilter='all';
   $('main-title').textContent=f||'Tous les produits';
   renderProducts(); renderSidebar();
@@ -894,18 +922,49 @@ function renderSidebar(){
 function renderProducts(){
   const grid=$('products');
   const order={alert:0,warn:1,ok:2,empty:3};
+  // Recherche : quand un mot est tapé, on cherche dans TOUS les produits
+  // (sans tenir compte du filtre ou de la famille sélectionnés)
+  const words = normTxt(searchTerm).split(/\s+/).filter(Boolean);
   let prods=STATE.catalogue.filter(p=>{
+    if(words.length){
+      const hay = normTxt(p.nom);
+      return words.every(w=>hay.includes(w));
+    }
     if(currentFilter!=='all'&&prodStatus(p)!==currentFilter) return false;
     if(currentFamille&&p.famille!==currentFamille) return false;
     return true;
   }).sort((a,b)=>order[prodStatus(a)]-order[prodStatus(b)]||a.famille.localeCompare(b.famille)||a.nom.localeCompare(b.nom));
 
   if(!prods.length){
-    grid.innerHTML='<div class="no-results"><div class="nr-icon">🔍</div><p>Aucun produit dans cette catégorie.</p></div>';
+    grid.innerHTML = words.length
+      ? `<div class="no-results"><div class="nr-icon">🔍</div><p>Aucun produit ne correspond à « ${searchTerm.replace(/[<>&"]/g,'')} ».</p></div>`
+      : '<div class="no-results"><div class="nr-icon">🔍</div><p>Aucun produit dans cette catégorie.</p></div>';
     return;
   }
   grid.innerHTML='';
   prods.forEach(prod=>grid.appendChild(buildCard(prod)));
+  // Peu de résultats : on ouvre directement les fiches
+  if(words.length && prods.length<=3){
+    prods.forEach(p=>{ const b=$(`body-${p.id}`),i=$(`ico-${p.id}`); if(b)b.classList.add('open'); if(i)i.classList.add('open'); });
+  }
+}
+
+// ═══════════════════════════════════════════════
+// RECHERCHE
+// ═══════════════════════════════════════════════
+let searchTerm='';
+function normTxt(s){ return String(s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/½/g,'1/2'); }
+function onSearch(v){
+  searchTerm=v;
+  $('search-clear').style.display = v ? 'block' : 'none';
+  $('main-title').textContent = v.trim() ? 'Recherche' : (currentFamille||{all:'Tous les produits',alert:'Expirés',warn:'Expire demain',ok:'En cours',empty:'Vitrine vide'}[currentFilter]||'Tous les produits');
+  renderProducts();
+}
+function resetSearch(){ searchTerm=''; const i=$('search-input'); if(i) i.value=''; const c=$('search-clear'); if(c) c.style.display='none'; }
+function clearSearch(){
+  $('search-input').value='';
+  onSearch('');
+  $('search-input').focus();
 }
 
 function buildCard(prod){
