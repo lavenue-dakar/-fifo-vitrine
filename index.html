@@ -747,8 +747,10 @@ async function pullCatalogue(){
 }
 
 // Écrire une entrée vitrine dans Sheets
-async function pushEntree(prodId, nomProduit, dateEntree, qty, dlc){
-  const ts = Date.now();
+// CORRECTIF : on réutilise l'ID du lot créé localement (avant, un 2e Date.now()
+// créait un ID différent → ventes/rebus envoyés ensuite introuvables dans le Sheet)
+async function pushEntree(prodId, nomProduit, dateEntree, qty, dlc, itemId){
+  const ts = itemId || Date.now();
   await postToScript({
     type: 'entree',
     produitId: prodId,
@@ -787,7 +789,16 @@ async function pushRebus(prodNom, dateEntree, qty, age, itemId, qteRestante){
 }
 
 // Envoi vers Google Apps Script
-async function postToScript(data){
+// CORRECTIF : les envois partent un par un, dans l'ordre des clics.
+// Avant, 2 clics rapides sur "Vendre 1" pouvaient arriver dans le désordre
+// (qty=1 puis qty=2) et le Sheet gardait la mauvaise quantité.
+let _syncQueue = Promise.resolve();
+function postToScript(data){
+  const p = _syncQueue.then(()=>_postToScript(data));
+  _syncQueue = p.catch(()=>{});
+  return p;
+}
+async function _postToScript(data){
   if(!getGsUrl()) throw new Error('Pas d URL Apps Script');
   const r = await fetch(getGsUrl(), {
     method: 'POST',
@@ -993,7 +1004,7 @@ async function addItem(pid){
   toast('Entrée enregistrée ✓');
   // Sync via Apps Script en arrière-plan
   if(getGsUrl()){
-    try{ await pushEntree(pid,prod.nom,date,qty,prod.dlc); }
+    try{ await pushEntree(pid,prod.nom,date,qty,prod.dlc,ts); }
     catch(e){ console.log('Script sync entree:',e); toast('⚠ Sheet non synchronisé — données sauvées localement'); }
   }
 }
