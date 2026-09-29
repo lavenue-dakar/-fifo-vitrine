@@ -846,7 +846,7 @@ async function _postToScript(data){
 // ═══════════════════════════════════════════════
 function itemStatus(prod,item){
   const age=daysDiff(item.dateEntree);
-  const rem=(item.dlc||prod.dlc)-age;
+  const rem=(prod.dlc||item.dlc||3)-age; // DLC actuelle du produit : une modif de DLC recalcule le statut
   if(rem<0)  return{label:'Expiré',       cls:'chip-alert',dot:'#8b1a1a',row:'expired', rem};
   if(rem===0)return{label:'Expire auj.',  cls:'chip-alert',dot:'#c0392b',row:'expired', rem};
   if(rem===1)return{label:'Expire demain',cls:'chip-warn', dot:'#e09020',row:'expiring',rem};
@@ -864,7 +864,7 @@ function prodStatus(prod){
   return w;
 }
 function ageTxt(n){ return n<=0 ? "Aujourd'hui" : n===1 ? '1 jour' : n+' jours'; }
-function ageCls(item){ const a=daysDiff(item.dateEntree), d=item.dlc||3; return a>=d ? 'age-alert' : a>=d-1 ? 'age-warn' : ''; }
+function ageCls(prod,item){ const a=daysDiff(item.dateEntree), d=prod.dlc||item.dlc||3; return a>=d ? 'age-alert' : a>=d-1 ? 'age-warn' : ''; }
 function totalQty(pid){ return (STATE.vitrine[pid]||[]).reduce((s,i)=>s+i.qty,0); }
 
 // ═══════════════════════════════════════════════
@@ -996,10 +996,10 @@ function buildCard(prod){
       <div class="items-hdr"><span>#</span><span>Entrée vitrine</span><span style="text-align:center">Qté</span><span style="text-align:center">Statut DLC</span><span style="text-align:right">Actions</span></div>`;
     items.forEach((item,idx)=>{
       const s=itemStatus(prod,item);
-      const exp=addDays(item.dateEntree,item.dlc||prod.dlc);
+      const exp=addDays(item.dateEntree,prod.dlc||item.dlc);
       itemsHtml+=`<div class="item-row ${s.row}">
         <div class="item-n">${idx+1}</div>
-        <div class="item-dates"><div class="item-date-main">Entré ${fmtDate(item.dateEntree)} <span class="age-badge ${ageCls(item)}">${ageTxt(daysDiff(item.dateEntree))}</span></div><div class="item-date-exp">Expire ${fmtDate(exp)}</div></div>
+        <div class="item-dates"><div class="item-date-main">Entré ${fmtDate(item.dateEntree)} <span class="age-badge ${ageCls(prod,item)}">${ageTxt(daysDiff(item.dateEntree))}</span></div><div class="item-date-exp">Expire ${fmtDate(exp)}</div></div>
         <div class="item-qty">${item.qty}</div>
         <div class="item-st"><span class="chip ${s.cls}">${s.label}</span></div>
         <div class="item-ac">
