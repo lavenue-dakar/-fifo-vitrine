@@ -255,7 +255,7 @@ body { font-family: var(--sans); background: var(--cream); color: var(--text); m
 .items-table { padding: 10px 16px; }
 .items-hdr {
   display: grid;
-  grid-template-columns: 24px 1fr 70px 70px 100px 160px;
+  grid-template-columns: 24px 1fr 60px 120px 190px;
   gap: 6px;
   font-size: 0.6rem; text-transform: uppercase;
   letter-spacing: 0.8px; color: var(--muted);
@@ -264,7 +264,7 @@ body { font-family: var(--sans); background: var(--cream); color: var(--text); m
 }
 .item-row {
   display: grid;
-  grid-template-columns: 24px 1fr 70px 70px 100px 160px;
+  grid-template-columns: 24px 1fr 60px 120px 190px;
   gap: 6px; align-items: center;
   padding: 7px 0; border-bottom: 1px solid var(--border);
   font-size: 0.78rem;
@@ -277,6 +277,13 @@ body { font-family: var(--sans); background: var(--cream); color: var(--text); m
 .item-date-main { font-weight: 500; font-size: 0.78rem; }
 .item-date-exp  { font-size: 0.65rem; color: var(--muted); }
 .item-age  { text-align: center; font-size: 0.72rem; color: var(--muted); }
+.age-badge {
+  display: inline-block; margin-left: 4px; padding: 1px 8px; border-radius: 99px;
+  background: var(--grey-bg); color: var(--brown2); font-size: 0.7rem; font-weight: 600;
+}
+.age-badge.age-warn  { background: var(--warn-bg);  color: var(--warn); }
+.age-badge.age-alert { background: var(--alert-bg); color: var(--alert); }
+.chip-age { background: var(--grey-bg); color: var(--brown2); }
 .item-qty  { text-align: center; font-weight: 600; font-size: 0.9rem; }
 .item-st   { text-align: center; }
 .item-ac   { display: flex; gap: 4px; justify-content: flex-end; }
@@ -407,7 +414,6 @@ body { font-family: var(--sans); background: var(--cream); color: var(--text); m
   }
   .item-n   { display: none; }
   .item-dates { grid-column: 1; grid-row: 1; }
-  .item-age   { display: none; }
   .item-qty   { grid-column: 2; grid-row: 1; font-size: 1.1rem; text-align: right; }
   .item-st    { grid-column: 1; grid-row: 2; text-align: left; }
   .item-ac    { grid-column: 2; grid-row: 2; }
@@ -844,7 +850,7 @@ function itemStatus(prod,item){
   if(rem<0)  return{label:'Expiré',       cls:'chip-alert',dot:'#8b1a1a',row:'expired', rem};
   if(rem===0)return{label:'Expire auj.',  cls:'chip-alert',dot:'#c0392b',row:'expired', rem};
   if(rem===1)return{label:'Expire demain',cls:'chip-warn', dot:'#e09020',row:'expiring',rem};
-  return        {label:`J+${rem}`,        cls:'chip-ok',   dot:'#2d6a2d',row:'',         rem};
+  return        {label:`Reste ${rem} j`,        cls:'chip-ok',   dot:'#2d6a2d',row:'',         rem};
 }
 function prodStatus(prod){
   const items=STATE.vitrine[prod.id]||[];
@@ -857,6 +863,8 @@ function prodStatus(prod){
   }
   return w;
 }
+function ageTxt(n){ return n<=0 ? "Aujourd'hui" : n===1 ? '1 jour' : n+' jours'; }
+function ageCls(item){ const a=daysDiff(item.dateEntree), d=item.dlc||3; return a>=d ? 'age-alert' : a>=d-1 ? 'age-warn' : ''; }
 function totalQty(pid){ return (STATE.vitrine[pid]||[]).reduce((s,i)=>s+i.qty,0); }
 
 // ═══════════════════════════════════════════════
@@ -985,14 +993,13 @@ function buildCard(prod){
     itemsHtml='<div class="empty-state">Vitrine vide — enregistrez une entrée ci-dessous.</div>';
   } else {
     itemsHtml=`<div class="items-table">
-      <div class="items-hdr"><span>#</span><span>Entrée vitrine</span><span style="text-align:center">Âge</span><span style="text-align:center">Qté</span><span style="text-align:center">Statut DLC</span><span style="text-align:right">Actions</span></div>`;
+      <div class="items-hdr"><span>#</span><span>Entrée vitrine</span><span style="text-align:center">Qté</span><span style="text-align:center">Statut DLC</span><span style="text-align:right">Actions</span></div>`;
     items.forEach((item,idx)=>{
       const s=itemStatus(prod,item);
       const exp=addDays(item.dateEntree,item.dlc||prod.dlc);
       itemsHtml+=`<div class="item-row ${s.row}">
         <div class="item-n">${idx+1}</div>
-        <div class="item-dates"><div class="item-date-main">${fmtDate(item.dateEntree)}</div><div class="item-date-exp">Expire ${fmtDate(exp)}</div></div>
-        <div class="item-age">J+${daysDiff(item.dateEntree)}</div>
+        <div class="item-dates"><div class="item-date-main">Entré ${fmtDate(item.dateEntree)} <span class="age-badge ${ageCls(item)}">${ageTxt(daysDiff(item.dateEntree))}</span></div><div class="item-date-exp">Expire ${fmtDate(exp)}</div></div>
         <div class="item-qty">${item.qty}</div>
         <div class="item-st"><span class="chip ${s.cls}">${s.label}</span></div>
         <div class="item-ac">
@@ -1022,6 +1029,7 @@ function buildCard(prod){
       </div>
       <div class="prod-chips">
         <span class="chip ${badgeCls}">${badgeTxt}</span>
+        ${items.length?`<span class="chip chip-age" title="Âge du lot le plus ancien">Plus ancien : ${ageTxt(daysDiff(items[0].dateEntree))}</span>`:''}
         <span class="chip chip-dlc">DLC ${prod.dlc}j</span>
         <span class="chip ${prod.origine==='Import FR'?'chip-imp':'chip-loc'}">${prod.origine}</span>
       </div>
