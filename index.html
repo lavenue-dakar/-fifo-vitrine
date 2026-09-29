@@ -771,7 +771,7 @@ async function pullCatalogue(){
   if(rows.length===0) return;
   STATE.catalogue = rows.filter(r=>r[0]).map(r=>({
     // ID stable basé uniquement sur le nom — pas de partie aléatoire
-    id: r[0].toLowerCase().replace(/[^a-z0-9]/g,'_').slice(0,25),
+    id: nomVersId(r[0]),
     nom: r[0], famille: r[1]||'Autre',
     dlc: parseInt(r[2])||3, origine: r[3]||'Import FR', note: r[4]||''
   }));
@@ -1218,16 +1218,27 @@ function saveModal(){
   if(!nom){alert('Le nom est obligatoire.');return;}
   const dlc=parseInt($('f-dlc').value);
   if(!dlc||dlc<1){alert('DLC ≥ 1 jour.');return;}
+  // Empêcher deux produits avec le même nom
+  const doublon=STATE.catalogue.find(x=>x.nom.trim().toUpperCase()===nom.toUpperCase() && x.id!==editingProdId);
+  if(doublon){alert('Un produit porte déjà ce nom.');return;}
+  let ancienNom='';
   if(editingProdId){
     const p=STATE.catalogue.find(x=>x.id===editingProdId);
-    if(p){p.nom=nom;p.famille=$('f-famille').value;p.dlc=dlc;p.origine=$('f-origine').value;p.note=$('f-note').value.trim();}
-    toast('Produit modifié ✓');
+    if(p){ancienNom=p.nom;p.nom=nom;p.famille=$('f-famille').value;p.dlc=dlc;p.origine=$('f-origine').value;p.note=$('f-note').value.trim();}
   }else{
-    STATE.catalogue.push({id:genId(),nom,famille:$('f-famille').value,dlc,origine:$('f-origine').value,note:$('f-note').value.trim()});
-    toast('Produit ajouté ✓');
+    // Même identifiant que celui recalculé au rechargement depuis le Sheet
+    STATE.catalogue.push({id:nomVersId(nom),nom,famille:$('f-famille').value,dlc,origine:$('f-origine').value,note:$('f-note').value.trim()});
   }
+  const fiche=STATE.catalogue.find(x=>x.nom===nom);
   saveLocal(); closeModal(); renderAll();
+  // CORRECTIF : enregistrer aussi dans l'onglet Catalogue du Sheet
+  // (avant, le changement restait sur la tablette et disparaissait au rafraîchissement)
+  if(!getGsUrl()){ toast('⚠ Enregistré sur cet appareil seulement'); return; }
+  toast(ancienNom?'Produit modifié ✓':'Produit ajouté ✓');
+  postToScript({type:'catalogue_save', ancienNom, nom, famille:fiche.famille, dlc:fiche.dlc, origine:fiche.origine, note:fiche.note||''})
+    .catch(e=>{ console.log('Script sync catalogue:',e); toast('⚠ Sheet non synchronisé — réessayer'); });
 }
+function nomVersId(nom){ return String(nom).toLowerCase().replace(/[^a-z0-9]/g,'_').slice(0,25); }
 function deleteProd(){
   if(!editingProdId)return;
   const p=STATE.catalogue.find(x=>x.id===editingProdId);
@@ -1235,6 +1246,7 @@ function deleteProd(){
   STATE.catalogue=STATE.catalogue.filter(x=>x.id!==editingProdId);
   delete STATE.vitrine[editingProdId];
   saveLocal(); toast('Produit supprimé'); closeModal(); renderAll();
+  if(getGsUrl()) postToScript({type:'catalogue_delete', nom:p.nom}).catch(e=>console.log('Script sync suppression:',e));
 }
 $('prod-modal').addEventListener('click',e=>{ if(e.target===$('prod-modal'))closeModal(); });
 
